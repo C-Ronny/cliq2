@@ -2,6 +2,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cliq2/config/supabase.dart';
 import '../../models/user_model.dart';
 import '../../services/connectivity_service.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 
 class AuthService {
   final SupabaseClient supabase = SupabaseConfig.client;
@@ -113,10 +115,100 @@ class AuthService {
   }
 
   // Get the current user (if logged in)
-  UserModel? getCurrentUser() {
+  Future<UserModel?> getCurrentUser() async {
     final user = supabase.auth.currentUser;
     if (user == null) return null;
 
-    return null; // We'll implement fetching the profile later
+    try {
+      final profileResponse = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (profileResponse == null) return null;
+
+      // If the user has a profile picture, generate a signed URL
+      if (profileResponse['profile_picture'] != null) {
+        final filePath = '${user.id}.jpg';
+        final signedUrlResponse = await supabase.storage
+            .from('avatars')
+            .createSignedUrl(filePath, 60 * 60); // URL valid for 1 hour
+        profileResponse['profile_picture'] = signedUrlResponse;
+      }
+
+      return UserModel.fromJson(profileResponse);
+    } catch (e) {
+      throw Exception('Failed to fetch user profile: $e');
+    }
+  }
+
+  // Update user profile
+  Future<UserModel> updateProfile({
+    required String userId,
+    String? username,
+    String? firstName,
+    String? lastName,
+    String? profilePictureUrl,
+  }) async {
+    try {
+      final updates = <String, dynamic>{};
+      if (username != null) updates['username'] = username;
+      if (firstName != null) updates['first_name'] = firstName;
+      if (lastName != null) updates['last_name'] = lastName;
+      if (profilePictureUrl != null) updates['profile_picture'] = profilePictureUrl;
+
+      if (updates.isEmpty) {
+        throw Exception('No updates provided');
+      }
+
+      final profileResponse = await supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', userId)
+          .select()
+          .single();
+
+      // If the user has a profile picture, generate a signed URL
+      if (profileResponse['profile_picture'] != null) {
+        final filePath = '$userId.jpg';
+        final signedUrlResponse = await supabase.storage
+            .from('avatars')
+            .createSignedUrl(filePath, 60 * 60); // URL valid for 1 hour
+        profileResponse['profile_picture'] = signedUrlResponse;
+      }
+
+      return UserModel.fromJson(profileResponse);
+    } catch (e) {
+      throw Exception('Failed to update profile: $e');
+    }
+  }
+
+  // Upload profile picture
+  Future<String> uploadProfilePicture(String userId, XFile image) async {
+    try {
+      final file = File(image.path);
+      final fileName = userId; // Use user ID as the file name
+      final filePath = '$fileName.jpg';
+
+      // Verify the user is authenticated
+      if (supabase.auth.currentUser == null) {
+        throw Exception('User not authenticated');
+      }
+
+      // Upload the file to the 'avatars' bucket
+      await supabase.storage
+          .from('avatars')
+          .upload(filePath, file, fileOptions: const FileOptions(upsert: true));
+
+      // Generate a signed URL for the uploaded file
+      final signedUrl = await supabase.storage
+          .from('avatars')
+          .createSignedUrl(filePath, 60 * 60); // URL valid for 1 hour
+
+      return signedUrl;
+    } catch (e) {
+      throw Exception('Failed to upload profile picture: $e');
+    }
   }
 }

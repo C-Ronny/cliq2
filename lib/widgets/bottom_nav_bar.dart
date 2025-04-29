@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../features/profile/screens/profile_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -11,9 +12,9 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
   static const List<Widget> _screens = [
-    Center(child: Text('Home', style: TextStyle(color: Colors.white))),
-    Center(child: Text('Friends', style: TextStyle(color: Colors.white))),
-    Center(child: Text('Profile', style: TextStyle(color: Colors.white))),
+    Center(child: Text('Home Screen', style: TextStyle(color: Colors.white, fontSize: 24))),
+    Center(child: Text('Friends Screen', style: TextStyle(color: Colors.white, fontSize: 24))),
+    ProfileScreen(),
   ];
 
   void _onItemTapped(int index) {
@@ -35,11 +36,11 @@ class _MainScreenState extends State<MainScreen> {
         onTap: _onItemTapped,
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.house),
+            icon: Icon(Icons.home),
             label: 'Home',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.people),
+            icon: Icon(Icons.group),
             label: 'Friends',
           ),
           BottomNavigationBarItem(
