@@ -47,6 +47,8 @@ app.*.map.json
 
 # Security 
 .env
+google-services.json
+
 
 # Database Queries Used
 db.sql
