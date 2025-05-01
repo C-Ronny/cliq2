@@ -28,7 +28,7 @@ class _SplashScreenState extends State<SplashScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Text(
-              'Cliq2',
+              'Cliq',
               style: TextStyle(
                 fontSize: 40,
                 fontWeight: FontWeight.bold,
