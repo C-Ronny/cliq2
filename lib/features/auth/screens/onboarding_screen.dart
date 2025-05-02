@@ -14,7 +14,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   final List<Map<String, String>> onboardingData = [
     {
-      'title': 'Welcome to Cliq2',
+      'title': 'Welcome to Cliq',
       'description': 'Connect with friends through video and chat!',
     },
     {

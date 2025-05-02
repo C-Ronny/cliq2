@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../features/auth/screens/friends_screen.dart';
 import '../features/profile/screens/profile_screen.dart';
 
 class MainScreen extends StatefulWidget {
@@ -11,10 +12,10 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  static const List<Widget> _screens = [
-    Center(child: Text('Home Screen', style: TextStyle(color: Colors.white, fontSize: 24))),
-    Center(child: Text('Friends Screen', style: TextStyle(color: Colors.white, fontSize: 24))),
-    ProfileScreen(),
+  final List<Widget> _screens = [
+    const Center(child: Text('Home Screen', style: TextStyle(color: Colors.white, fontSize: 24))),
+    const FriendsScreen(),
+    const ProfileScreen(),
   ];
 
   void _onItemTapped(int index) {

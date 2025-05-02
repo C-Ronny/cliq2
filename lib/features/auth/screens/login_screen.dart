@@ -104,7 +104,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                 children: [
                   const SizedBox(height: 40),
                   const Text(
-                    'Cliq2',
+                    'Cliq',
                     style: TextStyle(
                       fontSize: 40,
                       fontWeight: FontWeight.bold,

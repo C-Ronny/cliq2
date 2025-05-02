@@ -122,7 +122,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                 children: [
                   const SizedBox(height: 40),
                   const Text(
-                    'Cliq2',
+                    'Cliq',
                     style: TextStyle(
                       fontSize: 40,
                       fontWeight: FontWeight.bold,
@@ -141,7 +141,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Join Cliq2 today',
+                    'Join Cliq today',
                     style: TextStyle(
                       fontSize: 16,
                       color: Color(0xFFB3B3B3),
