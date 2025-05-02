@@ -1,10 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../auth/auth_service.dart';
 import '../../../models/user_model.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'dart:io';
+import 'package:go_router/go_router.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -19,11 +18,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _errorMessage;
   bool _isLoading = true;
   bool _isEditing = false;
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
-  final _usernameController = TextEditingController();
-  File? _selectedImage;
-  final ImagePicker _picker = ImagePicker();
+  final _emailController = TextEditingController();
+  XFile? _pickedImage;
 
   @override
   void initState() {
@@ -33,9 +33,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   void dispose() {
+    _usernameController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
-    _usernameController.dispose();
     super.dispose();
   }
 
@@ -47,24 +47,97 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     try {
       final user = await _authService.getCurrentUser();
+      if (user == null) {
+        setState(() {
+          _errorMessage = 'User not found. Please log in again.';
+          _isLoading = false;
+        });
+        return;
+      }
+
       setState(() {
         _user = user;
-        _firstNameController.text = user?.firstName ?? '';
-        _lastNameController.text = user?.lastName ?? '';
-        _usernameController.text = user?.username ?? '';
+        _usernameController.text = user.username ?? '';
+        _firstNameController.text = user.firstName ?? '';
+        _lastNameController.text = user.lastName ?? '';
+        _emailController.text = user.email ?? '';
+        _isLoading = false;
       });
     } catch (e) {
       setState(() {
-        _errorMessage = 'Failed to load profile. Please try again.';
-      });
-    } finally {
-      setState(() {
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
         _isLoading = false;
       });
     }
   }
 
-  Future<void> _logout() async {
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      setState(() {
+        _pickedImage = pickedFile;
+      });
+
+      try {
+        final userId = _user!.id;
+        final signedUrl = await _authService.uploadProfilePicture(userId, pickedFile);
+        final updatedUser = await _authService.updateProfile(
+          userId: userId,
+          profilePictureUrl: signedUrl,
+        );
+        setState(() {
+          _user = updatedUser;
+          _pickedImage = null;
+        });
+      } catch (e) {
+        setState(() {
+          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  Future<void> _updateProfile() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final updatedUser = await _authService.updateProfile(
+        userId: _user!.id,
+        username: _usernameController.text.isNotEmpty ? _usernameController.text : null,
+        firstName: _firstNameController.text.isNotEmpty ? _firstNameController.text : null,
+        lastName: _lastNameController.text.isNotEmpty ? _lastNameController.text : null,
+        email: _emailController.text.isNotEmpty ? _emailController.text : null,
+      );
+
+      setState(() {
+        _user = updatedUser;
+        _isEditing = false;
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile updated successfully!'),
+          backgroundColor: Color(0xFF4CAF50),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+        _isLoading = false;
+      });
+    }
+  }
+
+Future<void> _logout() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -87,330 +160,99 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<bool> _requestGalleryPermission() async {
-    // Check if permission is already granted
-    final status = await Permission.photos.status;
-    if (status.isGranted) {
-      return true;
-    }
-
-    // Show a modal to explain why we need gallery access
-    bool? shouldProceed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Gallery Access Needed'),
-        content: const Text(
-          'This app needs access to your gallery to select a profile picture. Would you like to grant permission?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Deny'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Allow'),
-          ),
-        ],
-      ),
-    );
-
-    // If the user denies the request, return false
-    if (shouldProceed != true) {
-      setState(() {
-        _errorMessage = 'Gallery access denied. You can enable it later in settings.';
-      });
-      return false;
-    }
-
-    // Request the permission
-    final newStatus = await Permission.photos.request();
-    if (newStatus.isGranted) {
-      return true;
-    } else {
-      // If denied (including permanently denied), show another dialog
-      await showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Permission Denied'),
-          content: const Text(
-            'Gallery access was denied. Please enable it in settings to select a profile picture.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                openAppSettings();
-                Navigator.pop(context);
-              },
-              child: const Text('Open Settings'),
-            ),
-          ],
-        ),
-      );
-      setState(() {
-        _errorMessage = 'Gallery access denied. Please enable permissions in settings.';
-      });
-      return false;
-    }
-  }
-
-  Future<void> _pickImage() async {
-    final hasPermission = await _requestGalleryPermission();
-    if (!hasPermission) {
-      return;
-    }
-
-    try {
-      final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
-      if (pickedFile != null) {
-        setState(() {
-          _selectedImage = File(pickedFile.path);
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to pick image: $e';
-      });
-    }
-  }
-
-  Future<void> _saveProfile() async {
-    if (_user == null) return;
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      String? profilePictureUrl;
-      if (_selectedImage != null) {
-        profilePictureUrl = await _authService.uploadProfilePicture(_user!.id, XFile(_selectedImage!.path));
-        // Clear the image cache for the old profile picture URL
-        if (_user!.profilePicture != null) {
-          await NetworkImage(_user!.profilePicture!).evict();
-        }
-      }
-
-      final updatedUser = await _authService.updateProfile(
-        userId: _user!.id,
-        firstName: _firstNameController.text.trim().isNotEmpty ? _firstNameController.text.trim() : null,
-        lastName: _lastNameController.text.trim().isNotEmpty ? _lastNameController.text.trim() : null,
-        username: _usernameController.text.trim().isNotEmpty ? _usernameController.text.trim() : null,
-        profilePictureUrl: profilePictureUrl,
-      );
-
-      setState(() {
-        _user = updatedUser;
-        _isEditing = false;
-        _selectedImage = null;
-      });
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to update profile: $e';
-      });
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      body: RefreshIndicator(
-        onRefresh: _fetchUserProfile,
-        color: const Color(0xFF4CAF50),
-        child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(
-                  color: Color(0xFF4CAF50),
-                ),
-              )
-            : _user == null
-                ? Center(
-                    child: SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Text(
-                            'No profile found.',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          if (_errorMessage != null)
-                            Text(
-                              _errorMessage!,
-                              style: const TextStyle(
-                                color: Colors.redAccent,
-                                fontSize: 14,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: _fetchUserProfile,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF4CAF50),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              'Retry',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+      backgroundColor: Colors.black,
+      body: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(
+                color: Color(0xFF4CAF50),
+              ),
+            )
+          : _user == null
+              ? Center(
+                  child: Text(
+                    _errorMessage ?? 'User not found.',
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 16,
                     ),
-                  )
-                : SingleChildScrollView(
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _fetchUserProfile,
+                  color: const Color(0xFF4CAF50),
+                  child: SingleChildScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24.0),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const SizedBox(height: 40), // Top padding
-                          Center(
-                            child: Stack(
-                              children: [
-                                GestureDetector(
-                                  onTap: _isEditing ? _pickImage : null,
-                                  child: CircleAvatar(
-                                    radius: 60,
-                                    backgroundImage: _selectedImage != null
-                                        ? FileImage(_selectedImage!)
-                                        : _user!.profilePicture != null
-                                            ? NetworkImage(_user!.profilePicture!)
-                                            : null,
-                                    child: _selectedImage == null && _user!.profilePicture == null
-                                        ? Text(
-                                            _user!.firstName[0].toUpperCase(),
-                                            style: const TextStyle(
-                                              fontSize: 40,
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                ),
-                                if (_isEditing)
-                                  Positioned(
-                                    bottom: 0,
-                                    right: 0,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF4CAF50),
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: const Color(0xFF121212),
-                                          width: 2,
-                                        ),
-                                      ),
-                                      child: const Icon(
-                                        Icons.edit,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Center(
-                            child: Text(
-                              '${_user!.firstName} ${_user!.lastName}',
-                              style: const TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          const SizedBox(height: 48),
+                          Stack(
                             children: [
-                              const Text(
-                                'Profile Details',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                ),
+                              CircleAvatar(
+                                radius: 55,
+                                backgroundImage: _pickedImage != null
+                                    ? FileImage(File(_pickedImage!.path))
+                                    : _user!.profilePicture != null
+                                        ? NetworkImage(_user!.profilePicture!)
+                                        : null,
+                                child: _pickedImage == null && _user!.profilePicture == null
+                                    ? Text(
+                                        _user!.firstName != null && _user!.firstName!.isNotEmpty
+                                            ? _user!.firstName![0].toUpperCase()
+                                            : 'U',
+                                        style: const TextStyle(
+                                          fontSize: 40,
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      )
+                                    : null,
                               ),
-                              ElevatedButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _isEditing = !_isEditing;
-                                    if (!_isEditing) {
-                                      _saveProfile();
-                                    }
-                                  });
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF4CAF50),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: Text(
-                                  _isEditing ? 'Save Profile' : 'Edit Profile',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: GestureDetector(
+                                  onTap: _pickImage,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xFF4CAF50),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.camera_alt,
+                                      color: Colors.white,
+                                      size: 15,
+                                    ),
                                   ),
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 16),
-                          _buildProfileField(
-                            label: 'Username',
-                            value: _user!.username ?? 'Not set',
-                            isEditable: true,
-                            controller: _usernameController,
+                          Text(
+                            _user!.username ?? 'No username',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          const SizedBox(height: 16),
-                          _buildProfileField(
-                            label: 'First Name',
-                            value: _user!.firstName,
-                            isEditable: true,
-                            controller: _firstNameController,
+                          const SizedBox(height: 8),
+                          Text(
+                            '${_user!.firstName ?? ''} ${_user!.lastName ?? ''}', 
+                            style: const TextStyle(
+                              color: Color(0xFF4CAF50),
+                              fontSize: 16,
+                            ),
                           ),
-                          const SizedBox(height: 16),
-                          _buildProfileField(
-                            label: 'Last Name',
-                            value: _user!.lastName,
-                            isEditable: true,
-                            controller: _lastNameController,
-                          ),
-                          const SizedBox(height: 16),
-                          _buildProfileField(
-                            label: 'Email',
-                            value: _user!.email,
-                            isEditable: false,
-                          ),
+                          const SizedBox(height: 24),
                           if (_errorMessage != null) ...[
-                            const SizedBox(height: 16),
                             Text(
                               _errorMessage!,
                               style: const TextStyle(
@@ -419,86 +261,219 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               textAlign: TextAlign.center,
                             ),
+                            const SizedBox(height: 16),
                           ],
-                          const SizedBox(height: 32),
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 80.0), // Space for bottom navigation bar
-                            child: SizedBox(
-                              width: double.infinity,
-                              height: 50,
-                              child: ElevatedButton(
-                                onPressed: _logout,
+                          Form(
+                            key: _formKey,
+                            child: Column(
+                              children: [
+                                TextFormField(
+                                  controller: _usernameController,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: InputDecoration(
+                                    labelText: 'Username',
+                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
+                                    filled: true,
+                                    fillColor: const Color(0xFF121212), // Match the scaffold background
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
+                                    ),
+                                    disabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
+                                    ),
+                                  ),
+                                  enabled: _isEditing,
+                                  validator: (value) {
+                                    if (value != null && value.length < 3 && value.isNotEmpty) {
+                                      return 'Username must be at least 3 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 16),
+                                TextFormField(
+                                  controller: _firstNameController,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: InputDecoration(
+                                    labelText: 'First Name',
+                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
+                                    filled: true,
+                                    fillColor: const Color(0xFF121212), // Match the scaffold background
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
+                                    ),
+                                    disabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
+                                    ),
+                                  ),
+                                  enabled: _isEditing,
+                                  validator: (value) {
+                                    if (value != null && value.length < 2 && value.isNotEmpty) {
+                                      return 'First name must be at least 2 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 16),
+                                TextFormField(
+                                  controller: _lastNameController,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: InputDecoration(
+                                    labelText: 'Last Name',
+                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
+                                    filled: true,
+                                    fillColor: const Color(0xFF121212), // Match the scaffold background
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
+                                    ),
+                                    disabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
+                                    ),
+                                  ),
+                                  enabled: _isEditing,
+                                  validator: (value) {
+                                    if (value != null && value.length < 2 && value.isNotEmpty) {
+                                      return 'Last name must be at least 2 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 16),
+                                TextFormField(
+                                  controller: _emailController,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: InputDecoration(
+                                    labelText: 'Email',
+                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
+                                    filled: true,
+                                    fillColor: const Color(0xFF121212), // Match the scaffold background
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
+                                    ),
+                                    disabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
+                                    ),
+                                  ),
+                                  enabled: _isEditing,
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return 'Email address is required';
+                                    }
+
+                                    final emailRegex = RegExp(
+                                      r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$',
+                                    );
+
+                                    if (!emailRegex.hasMatch(value)) {
+                                      return 'Please enter a valid email address';
+                                    }
+
+                                    return null;
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              ElevatedButton(
+                                onPressed: _isEditing ? _updateProfile : () => setState(() => _isEditing = true),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.redAccent,
+                                  backgroundColor: const Color(0xFF4CAF50),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 32,
+                                    vertical: 12,
+                                  ),
                                 ),
-                                child: const Text(
-                                  'Log Out',
-                                  style: TextStyle(
+                                child: Text(
+                                  _isEditing ? 'Save' : 'Edit Profile',
+                                  style: const TextStyle(
+                                    color: Colors.white,
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ),
+                              const SizedBox(width: 16),
+                              if (_isEditing)
+                                ElevatedButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _isEditing = false;
+                                      _usernameController.text = _user!.username ?? '';
+                                      _firstNameController.text = _user!.firstName ?? '';
+                                      _lastNameController.text = _user!.lastName ?? '';
+                                      _emailController.text = _user!.email ?? '';
+                                    });
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.redAccent,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 32,
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'Cancel',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          TextButton(
+                            onPressed: _logout,
+                            child: const Text(
+                              'Logout',
+                              style: TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
+                          const SizedBox(height: 80),
                         ],
                       ),
                     ),
                   ),
-      ),
-    );
-  }
-
-  Widget _buildProfileField({
-    required String label,
-    required String value,
-    required bool isEditable,
-    TextEditingController? controller,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 14,
-            color: Color(0xFFB3B3B3),
-          ),
-        ),
-        const SizedBox(height: 8),
-        _isEditing && isEditable
-            ? TextField(
-                controller: controller,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFF1E1E1E),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 ),
-              )
-            : Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E1E1E),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  value,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-      ],
     );
   }
 }

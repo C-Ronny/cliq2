@@ -8,13 +8,13 @@ import 'dart:io';
 class AuthService {
   final SupabaseClient supabase = SupabaseConfig.client;
   final ConnectivityService _connectivityService = ConnectivityService();
+  UserModel? _cachedCurrentUser;
 
   // Sign up a new user (auth only)
   Future<void> signUp({
     required String email,
     required String password,
   }) async {
-    // Check for internet connectivity
     if (!(await _connectivityService.isConnected())) {
       throw Exception('No internet connection');
     }
@@ -68,7 +68,6 @@ class AuthService {
     required String email,
     required String password,
   }) async {
-    // Check for internet connectivity
     if (!(await _connectivityService.isConnected())) {
       throw Exception('No internet connection');
     }
@@ -83,7 +82,6 @@ class AuthService {
         throw Exception('Invalid email or password');
       }
 
-      // Fetch the user's profile
       final profileResponse = await supabase
           .from('profiles')
           .select()
@@ -91,11 +89,12 @@ class AuthService {
           .maybeSingle();
 
       if (profileResponse == null) {
-        // Profile doesn't exist yet; user needs to create it
         throw Exception('Profile not found. Please complete your profile setup.');
       }
 
-      return UserModel.fromJson(profileResponse);
+      final user = UserModel.fromJson(profileResponse);
+      _cachedCurrentUser = user;
+      return user;
     } catch (e) {
       if (e.toString().contains('SocketException') || e.toString().contains('ClientException')) {
         throw Exception('Failed to connect. Please try again.');
@@ -106,16 +105,20 @@ class AuthService {
 
   // Log out the current user
   Future<void> logout() async {
-    // Check for internet connectivity
     if (!(await _connectivityService.isConnected())) {
       throw Exception('No internet connection');
     }
 
     await supabase.auth.signOut();
+    _cachedCurrentUser = null;
   }
 
   // Get the current user (if logged in)
   Future<UserModel?> getCurrentUser() async {
+    if (_cachedCurrentUser != null) {
+      return _cachedCurrentUser;
+    }
+
     final user = supabase.auth.currentUser;
     if (user == null) return null;
 
@@ -128,16 +131,24 @@ class AuthService {
 
       if (profileResponse == null) return null;
 
-      // If the user has a profile picture, generate a signed URL
-      if (profileResponse['profile_picture'] != null) {
+      if (profileResponse['profile_picture'] != null &&
+          !profileResponse['profile_picture'].contains('signed')) {
         final filePath = '${user.id}.jpg';
-        final signedUrlResponse = await supabase.storage
-            .from('avatars')
-            .createSignedUrl(filePath, 60 * 60); // URL valid for 1 hour
-        profileResponse['profile_picture'] = signedUrlResponse;
+        try {
+          final signedUrlResponse = await supabase.storage
+              .from('avatars')
+              .createSignedUrl(filePath, 60 * 60)
+              .timeout(const Duration(seconds: 5));
+          profileResponse['profile_picture'] = signedUrlResponse;
+        } catch (e) {
+          print('Failed to fetch signed URL for current user ${user.id}: $e');
+          profileResponse['profile_picture'] = null; // Fallback to null if the image doesn't exist
+        }
       }
 
-      return UserModel.fromJson(profileResponse);
+      final currentUser = UserModel.fromJson(profileResponse);
+      _cachedCurrentUser = currentUser;
+      return currentUser;
     } catch (e) {
       throw Exception('Failed to fetch user profile: $e');
     }
@@ -149,6 +160,7 @@ class AuthService {
     String? username,
     String? firstName,
     String? lastName,
+    String? email,
     String? profilePictureUrl,
   }) async {
     try {
@@ -156,6 +168,7 @@ class AuthService {
       if (username != null) updates['username'] = username;
       if (firstName != null) updates['first_name'] = firstName;
       if (lastName != null) updates['last_name'] = lastName;
+      if (email != null) updates['email'] = email;
       if (profilePictureUrl != null) updates['profile_picture'] = profilePictureUrl;
 
       if (updates.isEmpty) {
@@ -169,16 +182,24 @@ class AuthService {
           .select()
           .single();
 
-      // If the user has a profile picture, generate a signed URL
-      if (profileResponse['profile_picture'] != null) {
+      if (profileResponse['profile_picture'] != null &&
+          !profileResponse['profile_picture'].contains('signed')) {
         final filePath = '$userId.jpg';
-        final signedUrlResponse = await supabase.storage
-            .from('avatars')
-            .createSignedUrl(filePath, 60 * 60); // URL valid for 1 hour
-        profileResponse['profile_picture'] = signedUrlResponse;
+        try {
+          final signedUrlResponse = await supabase.storage
+              .from('avatars')
+              .createSignedUrl(filePath, 60 * 60)
+              .timeout(const Duration(seconds: 5));
+          profileResponse['profile_picture'] = signedUrlResponse;
+        } catch (e) {
+          print('Failed to fetch signed URL for updated user $userId: $e');
+          profileResponse['profile_picture'] = null; // Fallback to null if the image doesn't exist
+        }
       }
 
-      return UserModel.fromJson(profileResponse);
+      final updatedUser = UserModel.fromJson(profileResponse);
+      _cachedCurrentUser = updatedUser;
+      return updatedUser;
     } catch (e) {
       throw Exception('Failed to update profile: $e');
     }
@@ -188,27 +209,295 @@ class AuthService {
   Future<String> uploadProfilePicture(String userId, XFile image) async {
     try {
       final file = File(image.path);
-      final fileName = userId; // Use user ID as the file name
+      final fileName = userId;
       final filePath = '$fileName.jpg';
 
-      // Verify the user is authenticated
       if (supabase.auth.currentUser == null) {
         throw Exception('User not authenticated');
       }
 
-      // Upload the file to the 'avatars' bucket
       await supabase.storage
           .from('avatars')
           .upload(filePath, file, fileOptions: const FileOptions(upsert: true));
 
-      // Generate a signed URL for the uploaded file
       final signedUrl = await supabase.storage
           .from('avatars')
-          .createSignedUrl(filePath, 60 * 60); // URL valid for 1 hour
+          .createSignedUrl(filePath, 60 * 60)
+          .timeout(const Duration(seconds: 5));
 
       return signedUrl;
     } catch (e) {
       throw Exception('Failed to upload profile picture: $e');
     }
   }
+
+  // Search users by username
+  Future<List<UserModel>> searchUsers({
+    required String query,
+    required Set<String> friendIds,
+    required Set<String> requestIds,
+  }) async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    try {
+      final currentUser = await getCurrentUser();
+      if (currentUser == null) {
+        throw Exception('User not authenticated');
+      }
+
+      final response = await supabase
+          .from('profiles')
+          .select('id, username, email, first_name, last_name, profile_picture')
+          .ilike('username', '%$query%')
+          .neq('id', currentUser.id);
+
+      final users = (response as List<dynamic>)
+          .map((json) => UserModel.fromJson(json))
+          .toList();
+
+      return users
+          .where((user) => !friendIds.contains(user.id) && !requestIds.contains(user.id))
+          .toList();
+    } catch (e) {
+      throw Exception('Failed to search users: $e');
+    }
+  }
+
+  // Fetch signed URLs for a list of users concurrently
+  Future<List<UserModel>> fetchSignedUrls(List<UserModel> users) async {
+    final updatedUsers = List<UserModel>.from(users);
+    final futures = <Future>[];
+
+    for (var user in updatedUsers) {
+      if (user.profilePicture != null && !user.profilePicture!.contains('signed')) {
+        final filePath = '${user.id}.jpg';
+        futures.add(
+          supabase.storage
+              .from('avatars')
+              .createSignedUrl(filePath, 60 * 60)
+              .timeout(const Duration(seconds: 5))
+              .then((signedUrl) {
+            user.profilePicture = signedUrl;
+          }).catchError((e) {
+            print('Failed to fetch signed URL for user ${user.id}: $e');
+            user.profilePicture = null; // Fallback to null if the image doesn't exist
+          }),
+        );
+      }
+    }
+
+    await Future.wait(futures);
+    return updatedUsers;
+  }
+
+  // Get friend requests (incoming)
+  Future<List<Map<String, dynamic>>> getFriendRequests() async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      final response = await supabase
+          .from('friend_requests')
+          .select('id, from_user_id, status, profiles!friend_requests_from_user_id_fkey(id, username, email, first_name, last_name, profile_picture)')
+          .eq('to_user_id', currentUser.id)
+          .eq('status', 'pending');
+
+      final requests = (response as List<dynamic>).map((request) {
+        final user = UserModel.fromJson(request['profiles']);
+        return {
+          'request_id': request['id'],
+          'sender': user,
+        };
+      }).toList();
+
+      final futures = <Future>[];
+      for (var request in requests) {
+        final user = request['sender'] as UserModel;
+        if (user.profilePicture != null && !user.profilePicture!.contains('signed')) {
+          final filePath = '${user.id}.jpg';
+          futures.add(
+            supabase.storage
+                .from('avatars')
+                .createSignedUrl(filePath, 60 * 60)
+                .timeout(const Duration(seconds: 5))
+                .then((signedUrl) {
+              user.profilePicture = signedUrl;
+            }).catchError((e) {
+              print('Failed to fetch signed URL for user ${user.id} in friend requests: $e');
+              user.profilePicture = null; // Fallback to null if the image doesn't exist
+            }),
+          );
+        }
+      }
+
+      await Future.wait(futures);
+      return requests;
+    } catch (e) {
+      throw Exception('Failed to fetch friend requests: $e');
+    }
+  }
+
+  // Send a friend request with duplicate check
+  Future<void> sendFriendRequest(String toUserId) async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      // Check for existing friend request in either direction
+      final existingRequest = await supabase
+          .from('friend_requests')
+          .select()
+          .or('and(from_user_id.eq.${currentUser.id},to_user_id.eq.$toUserId),and(from_user_id.eq.$toUserId,to_user_id.eq.${currentUser.id})')
+          .maybeSingle();
+
+      if (existingRequest != null) {
+        throw Exception('A friend request already exists between you and this user.');
+      }
+
+      await supabase.from('friend_requests').insert({
+        'from_user_id': currentUser.id,
+        'to_user_id': toUserId,
+        'status': 'pending',
+      });
+    } catch (e) {
+      throw Exception('Failed to send friend request: $e');
+    }
+  }
+
+  // Accept a friend request using RPC
+  Future<void> acceptFriendRequest(String requestId) async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      await supabase.rpc('accept_friend_request', params: {
+        'p_request_id': requestId,
+        'p_to_user_id': currentUser.id,
+      });
+    } catch (e) {
+      throw Exception('Failed to accept friend request: $e');
+    }
+  }
+
+  // Decline a friend request
+  Future<void> declineFriendRequest(String requestId) async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      await supabase
+          .from('friend_requests')
+          .update({'status': 'declined'})
+          .eq('id', requestId)
+          .eq('to_user_id', currentUser.id);
+    } catch (e) {
+      throw Exception('Failed to decline friend request: $e');
+    }
+  }
+
+  // Get friends list
+  Future<List<UserModel>> getFriends() async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      final startTime = DateTime.now();
+      final response = await supabase
+          .from('friendships')
+          .select('profiles!friendships_friend_id_fkey(id, username, first_name, last_name)')
+          .eq('user_id', currentUser.id);
+
+      final friends = (response as List<dynamic>)
+          .map((friendship) => UserModel.fromJson(friendship['profiles']))
+          .toList();
+
+      final duration = DateTime.now().difference(startTime);
+      print('Fetching friends took: ${duration.inMilliseconds}ms');
+
+      return friends;
+    } catch (e) {
+      throw Exception('Failed to fetch friends: $e');
+    }
+  }
+
+  // Remove a friend
+  Future<void> removeFriend(String friendId) async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      await supabase
+          .from('friendships')
+          .delete()
+          .eq('user_id', currentUser.id)
+          .eq('friend_id', friendId);
+
+      await supabase
+          .from('friendships')
+          .delete()
+          .eq('user_id', friendId)
+          .eq('friend_id', currentUser.id);
+    } catch (e) {
+      throw Exception('Failed to remove friend: $e');
+    }
+  }
+
+  Future<void> fetchProfilePicture(UserModel user) async {
+    if (user.profilePicture != null && user.profilePicture!.contains('signed')) return;
+
+    try {
+      final startTime = DateTime.now();
+      final signedUrl = await supabase.storage
+          .from('avatars')
+          .createSignedUrl('${user.id}.jpg', 60 * 60)
+          .timeout(const Duration(seconds: 2)); // Shorter timeout
+      final duration = DateTime.now().difference(startTime);
+      print('Fetching profile picture for ${user.id} took: ${duration.inMilliseconds}ms');
+
+      user.profilePicture = signedUrl;
+    } catch (e) {
+      print('Failed to fetch signed URL for ${user.id}: $e');
+      user.profilePicture = null; // Fallback to null
+    }
+  }
+
+
 }
