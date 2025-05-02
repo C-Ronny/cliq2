@@ -436,7 +436,7 @@ class AuthService {
       final startTime = DateTime.now();
       final response = await supabase
           .from('friendships')
-          .select('profiles!friendships_friend_id_fkey(id, username, first_name, last_name)')
+          .select('profiles!friendships_friend_id_fkey(id, username, first_name, last_name, profile_picture)')
           .eq('user_id', currentUser.id);
 
       final friends = (response as List<dynamic>)

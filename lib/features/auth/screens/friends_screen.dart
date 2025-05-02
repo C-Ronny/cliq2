@@ -126,8 +126,18 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       });
 
       // Load profile pictures asynchronously
-      for (var friend in _friends) {
-        _authService.fetchProfilePicture(friend);
+      final profilesLoaded = await Future.wait(
+        friends.map((friend) async {
+          await _authService.fetchProfilePicture(friend);
+          return friend;
+        }),
+      );
+      
+      if (mounted) {
+        setState(() {
+          // Update the UI with loaded profile pictures
+          _friends = profilesLoaded;
+        });
       }
     } catch (e) {
       setState(() {
@@ -158,8 +168,16 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       });
 
       // Load profile pictures asynchronously
-      for (var request in _friendRequests) {
-        _authService.fetchProfilePicture(request['sender'] as UserModel);
+      final updatedRequests = List<Map<String, dynamic>>.from(_friendRequests);
+      for (var request in updatedRequests) {
+        await _authService.fetchProfilePicture(request['sender'] as UserModel);
+      }
+      
+      if (mounted) {
+        setState(() {
+          // Update the UI with loaded profile pictures
+          _friendRequests = updatedRequests;
+        });
       }
     } catch (e) {
       setState(() {
@@ -207,8 +225,18 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       });
 
       // Load profile pictures asynchronously
-      for (var user in _searchResults) {
-        _authService.fetchProfilePicture(user);
+      final updatedResults = await Future.wait(
+        _searchResults.map((user) async {
+          await _authService.fetchProfilePicture(user);
+          return user;
+        }),
+      );
+      
+      if (mounted) {
+        setState(() {
+          // Update the UI with loaded profile pictures
+          _searchResults = updatedResults;
+        });
       }
     } catch (e) {
       setState(() {
@@ -548,10 +576,12 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                                       children: [
                                         CircleAvatar(
                                           radius: 20,
-                                          backgroundImage: user.profilePicture != null
+                                          backgroundColor: Colors.grey[700],
+                                          backgroundImage: user.profilePicture != null && user.profilePicture!.isNotEmpty
                                               ? NetworkImage(user.profilePicture!)
                                               : null,
-                                          child: user.profilePicture == null
+                                          onBackgroundImageError: user.profilePicture != null ? (_, __) {} : null,
+                                          child: user.profilePicture == null || user.profilePicture!.isEmpty
                                               ? Text(
                                                   (user.firstName ?? 'U')[0].toUpperCase(),
                                                   style: const TextStyle(
@@ -622,10 +652,12 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
           children: [
             CircleAvatar(
               radius: 24,
-              backgroundImage: user.profilePicture != null
+              backgroundColor: Colors.grey[700],
+              backgroundImage: user.profilePicture != null && user.profilePicture!.isNotEmpty
                   ? NetworkImage(user.profilePicture!)
                   : null,
-              child: user.profilePicture == null
+              onBackgroundImageError: user.profilePicture != null ? (_, __) {} : null,
+              child: user.profilePicture == null || user.profilePicture!.isEmpty
                   ? Text(
                       (user.firstName ?? 'U')[0].toUpperCase(),
                       style: const TextStyle(
