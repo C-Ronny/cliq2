@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'features/auth/screens/login_screen.dart';
 import 'features/auth/screens/onboarding_screen.dart';
+import 'features/auth/screens/profile_setup_screen.dart';
 import 'features/auth/screens/signup_screen.dart';
 import 'features/auth/screens/splash_screen.dart';
-import 'features/auth/screens/profile_setup_screen.dart';
+import 'features/auth/screens/friend_profile_screen.dart';
+import 'models/user_model.dart';
 import 'widgets/bottom_nav_bar.dart';
 
 final GoRouter router = GoRouter(
@@ -123,6 +125,32 @@ final GoRouter router = GoRouter(
           );
         },
       ),
+      routes: [
+        GoRoute(
+          path: 'friend-profile',
+          builder: (context, state) {
+            final friend = state.extra as UserModel;
+            return FriendProfileScreen(friend: friend);
+          },
+          pageBuilder: (context, state) {
+            final friend = state.extra as UserModel;
+            return CustomTransitionPage(
+              key: state.pageKey,
+              child: FriendProfileScreen(friend: friend),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                const begin = Offset(1.0, 0.0);
+                const end = Offset.zero;
+                const curve = Curves.easeInOut;
+                var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+                return SlideTransition(
+                  position: animation.drive(tween),
+                  child: child,
+                );
+              },
+            );
+          },
+        ),
+      ],
     ),
   ],
 );
