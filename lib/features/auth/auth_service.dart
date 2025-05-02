@@ -231,7 +231,7 @@ class AuthService {
     }
   }
 
-  // Search users by username
+  // Search users by username with friend request status
   Future<List<UserModel>> searchUsers({
     required String query,
     required Set<String> friendIds,
@@ -256,10 +256,51 @@ class AuthService {
       final users = (response as List<dynamic>)
           .map((json) => UserModel.fromJson(json))
           .toList();
+          
+      // Get all users who have sent you friend requests
+      final incomingRequests = await supabase
+          .from('friend_requests')
+          .select('from_user_id')
+          .eq('to_user_id', currentUser.id)
+          .eq('status', 'pending');
+          
+      final Set<String> incomingRequestIds = incomingRequests.isNotEmpty 
+          ? Set<String>.from(incomingRequests.map((req) => req['from_user_id'] as String))
+          : <String>{};
+          
+      // Get all users to whom you've sent friend requests
+      final outgoingRequests = await supabase
+          .from('friend_requests')
+          .select('to_user_id')
+          .eq('from_user_id', currentUser.id)
+          .eq('status', 'pending');
+          
+      final Set<String> outgoingRequestIds = outgoingRequests.isNotEmpty
+          ? Set<String>.from(outgoingRequests.map((req) => req['to_user_id'] as String))
+          : <String>{};
 
-      return users
-          .where((user) => !friendIds.contains(user.id) && !requestIds.contains(user.id))
-          .toList();
+      print('Friend IDs: $friendIds');
+      print('Incoming request IDs: $incomingRequestIds');
+      print('Outgoing request IDs: $outgoingRequestIds');
+      
+      // Filter out friends and pending requests from search results
+      final filteredUsers = users.where((user) {
+        // Don't show if they're already a friend
+        if (friendIds.contains(user.id)) return false;
+        
+        // Tag users who have sent you requests or who you've sent requests to
+        if (incomingRequestIds.contains(user.id)) {
+          user.hasIncomingRequest = true;
+        }
+        
+        if (outgoingRequestIds.contains(user.id)) {
+          user.hasOutgoingRequest = true;
+        }
+        
+        return true;
+      }).toList();
+
+      return filteredUsers;
     } catch (e) {
       throw Exception('Failed to search users: $e');
     }
@@ -304,12 +345,14 @@ class AuthService {
     }
 
     try {
+      print('Fetching friend requests for user: ${currentUser.id}');
       final response = await supabase
           .from('friend_requests')
           .select('id, from_user_id, status, profiles!friend_requests_from_user_id_fkey(id, username, email, first_name, last_name, profile_picture)')
           .eq('to_user_id', currentUser.id)
           .eq('status', 'pending');
 
+      print('Friend requests response: $response');
       final requests = (response as List<dynamic>).map((request) {
         final user = UserModel.fromJson(request['profiles']);
         return {
@@ -318,34 +361,20 @@ class AuthService {
         };
       }).toList();
 
-      final futures = <Future>[];
+      // Load profile pictures for all users in requests
       for (var request in requests) {
         final user = request['sender'] as UserModel;
-        if (user.profilePicture != null && !user.profilePicture!.contains('signed')) {
-          final filePath = '${user.id}.jpg';
-          futures.add(
-            supabase.storage
-                .from('avatars')
-                .createSignedUrl(filePath, 60 * 60)
-                .timeout(const Duration(seconds: 5))
-                .then((signedUrl) {
-              user.profilePicture = signedUrl;
-            }).catchError((e) {
-              print('Failed to fetch signed URL for user ${user.id} in friend requests: $e');
-              user.profilePicture = null; // Fallback to null if the image doesn't exist
-            }),
-          );
-        }
+        await fetchProfilePicture(user);
       }
 
-      await Future.wait(futures);
       return requests;
     } catch (e) {
+      print('Error fetching friend requests: $e');
       throw Exception('Failed to fetch friend requests: $e');
     }
   }
 
-  // Send a friend request with duplicate check
+  // Send a friend request with proper checks
   Future<void> sendFriendRequest(String toUserId) async {
     if (!(await _connectivityService.isConnected())) {
       throw Exception('No internet connection');
@@ -357,24 +386,50 @@ class AuthService {
     }
 
     try {
-      // Check for existing friend request in either direction
-      final existingRequest = await supabase
-          .from('friend_requests')
-          .select()
-          .or('and(from_user_id.eq.${currentUser.id},to_user_id.eq.$toUserId),and(from_user_id.eq.$toUserId,to_user_id.eq.${currentUser.id})')
+      // First check if they're already friends
+      final existingFriendship = await supabase
+          .from('friendships')
+          .select('id')
+          .match({'user_id': currentUser.id, 'friend_id': toUserId})
           .maybeSingle();
-
-      if (existingRequest != null) {
-        throw Exception('A friend request already exists between you and this user.');
+          
+      if (existingFriendship != null) {
+        throw Exception('You are already friends with this user.');
       }
 
+      // Check for outgoing friend requests
+      final outgoingRequest = await supabase
+          .from('friend_requests')
+          .select('id')
+          .match({'from_user_id': currentUser.id, 'to_user_id': toUserId})
+          .maybeSingle();
+          
+      if (outgoingRequest != null) {
+        throw Exception('You have already sent a friend request to this user.');
+      }
+      
+      // Check for incoming friend requests
+      final incomingRequest = await supabase
+          .from('friend_requests')
+          .select('id')
+          .match({'from_user_id': toUserId, 'to_user_id': currentUser.id})
+          .maybeSingle();
+          
+      if (incomingRequest != null) {
+        throw Exception('This user has already sent you a friend request. Check your requests tab.');
+      }
+
+      // All clear, insert the new friend request
       await supabase.from('friend_requests').insert({
         'from_user_id': currentUser.id,
         'to_user_id': toUserId,
         'status': 'pending',
       });
     } catch (e) {
-      throw Exception('Failed to send friend request: $e');
+      if (e is PostgrestException) {
+        throw Exception('Network error. Please try again.');
+      }
+      throw Exception(e.toString().replaceFirst('Exception: ', ''));
     }
   }
 
@@ -480,24 +535,60 @@ class AuthService {
     }
   }
 
-  Future<void> fetchProfilePicture(UserModel user) async {
-    if (user.profilePicture != null && user.profilePicture!.contains('signed')) return;
+  Future<bool> fetchProfilePicture(UserModel user) async {
+    // Skip if already has a valid URL
+    if (user.profilePicture != null && Uri.tryParse(user.profilePicture!)?.isAbsolute == true) {
+      return true;
+    }
 
     try {
-      final startTime = DateTime.now();
-      final signedUrl = await supabase.storage
-          .from('avatars')
-          .createSignedUrl('${user.id}.jpg', 60 * 60)
-          .timeout(const Duration(seconds: 2)); // Shorter timeout
-      final duration = DateTime.now().difference(startTime);
-      print('Fetching profile picture for ${user.id} took: ${duration.inMilliseconds}ms');
-
-      user.profilePicture = signedUrl;
+      // Use the Supabase getPublicUrl method to get a public URL for the image
+      final String bucketName = 'avatars';
+      final String filePath = '${user.id}.jpg';
+      
+      // Get public URL directly from storage
+      final String publicUrl = supabase.storage.from(bucketName).getPublicUrl(filePath);
+      
+      print('Generated public URL for ${user.id}: $publicUrl');
+      
+      user.profilePicture = publicUrl;
+      return true;
     } catch (e) {
-      print('Failed to fetch signed URL for ${user.id}: $e');
-      user.profilePicture = null; // Fallback to null
+      print('Failed to create URL for ${user.id}: $e');
+      user.profilePicture = null; // Reset to null on failure
+      return false;
     }
   }
 
+  // Check outgoing friend requests from current user
+  Future<Map<String, String>> getOutgoingFriendRequests() async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      final response = await supabase
+          .from('friend_requests')
+          .select('id, to_user_id, status')
+          .eq('from_user_id', currentUser.id)
+          .neq('status', 'declined');
+
+      // Create a map of user_id -> status
+      final Map<String, String> requestStatusMap = {};
+      for (var request in response) {
+        requestStatusMap[request['to_user_id'] as String] = request['status'] as String;
+      }
+      
+      return requestStatusMap;
+    } catch (e) {
+      print('Error fetching outgoing friend requests: $e');
+      return {};
+    }
+  }
 
 }
