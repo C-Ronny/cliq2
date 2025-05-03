@@ -5,6 +5,8 @@ class UserModel {
   final String? lastName;
   final String? username;
   String? profilePicture;
+  bool hasIncomingRequest = false;
+  bool hasOutgoingRequest = false;
 
   UserModel({
     required this.id,
