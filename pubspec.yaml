@@ -21,6 +21,8 @@ dependencies:
   connectivity_plus: ^6.1.4 # for network connectivity
   image_picker: ^1.1.2 # for selecting images
   permission_handler: ^12.0.0+1 # for handling permissions
+  agora_rtc_engine: ^6.5.1 # for video calling
+  
   
 dev_dependencies:
   flutter_test:
