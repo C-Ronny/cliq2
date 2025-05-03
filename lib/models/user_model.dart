@@ -5,8 +5,6 @@ class UserModel {
   final String? lastName;
   final String? username;
   String? profilePicture;
-  bool hasIncomingRequest = false;  // Flag for users who have sent you requests
-  bool hasOutgoingRequest = false;  // Flag for users to whom you've sent requests
 
   UserModel({
     required this.id,
@@ -15,8 +13,6 @@ class UserModel {
     this.lastName,
     this.username,
     this.profilePicture,
-    this.hasIncomingRequest = false,
-    this.hasOutgoingRequest = false,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -27,8 +23,6 @@ class UserModel {
       lastName: json['last_name'] as String?,
       username: json['username'] as String?,
       profilePicture: json['profile_picture'] as String?,
-      hasIncomingRequest: json['has_incoming_request'] as bool? ?? false,
-      hasOutgoingRequest: json['has_outgoing_request'] as bool? ?? false,
     );
   }
 
@@ -40,8 +34,6 @@ class UserModel {
       'last_name': lastName,
       'username': username,
       'profile_picture': profilePicture,
-      'has_incoming_request': hasIncomingRequest,
-      'has_outgoing_request': hasOutgoingRequest,
     };
   }
 }

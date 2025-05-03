@@ -27,7 +27,6 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
   Timer? _debounce;
   Set<String> _friendIds = {};
   Set<String> _requestIds = {};
-  Map<String, String> _outgoingRequestsMap = {}; // Track outgoing requests
   late final RealtimeChannel _friendsChannel;
   late final RealtimeChannel _requestsChannel;
 
@@ -127,18 +126,8 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       });
 
       // Load profile pictures asynchronously
-      final profilesLoaded = await Future.wait(
-        friends.map((friend) async {
-          await _authService.fetchProfilePicture(friend);
-          return friend;
-        }),
-      );
-      
-      if (mounted) {
-        setState(() {
-          // Update the UI with loaded profile pictures
-          _friends = profilesLoaded;
-        });
+      for (var friend in _friends) {
+        _authService.fetchProfilePicture(friend);
       }
     } catch (e) {
       setState(() {
@@ -169,16 +158,8 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       });
 
       // Load profile pictures asynchronously
-      final updatedRequests = List<Map<String, dynamic>>.from(_friendRequests);
-      for (var request in updatedRequests) {
-        await _authService.fetchProfilePicture(request['sender'] as UserModel);
-      }
-      
-      if (mounted) {
-        setState(() {
-          // Update the UI with loaded profile pictures
-          _friendRequests = updatedRequests;
-        });
+      for (var request in _friendRequests) {
+        _authService.fetchProfilePicture(request['sender'] as UserModel);
       }
     } catch (e) {
       setState(() {
@@ -211,10 +192,6 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
 
     try {
       print('Searching for: $query');
-      
-      // Fetch outgoing friend requests to display status
-      _outgoingRequestsMap = await _authService.getOutgoingFriendRequests();
-      
       final startTime = DateTime.now();
       final results = await _authService.searchUsers(
         query: query,
@@ -230,18 +207,8 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       });
 
       // Load profile pictures asynchronously
-      final updatedResults = await Future.wait(
-        _searchResults.map((user) async {
-          await _authService.fetchProfilePicture(user);
-          return user;
-        }),
-      );
-      
-      if (mounted) {
-        setState(() {
-          // Update the UI with loaded profile pictures
-          _searchResults = updatedResults;
-        });
+      for (var user in _searchResults) {
+        _authService.fetchProfilePicture(user);
       }
     } catch (e) {
       setState(() {
@@ -253,16 +220,6 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
   }
 
   void _onSearchChanged(String query) {
-    // Clear search results immediately if query is empty
-    if (query.isEmpty) {
-      setState(() {
-        _searchResults = [];
-        _isSearching = false;
-      });
-      if (_debounce?.isActive ?? false) _debounce!.cancel();
-      return;
-    }
-    
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 100), () {
       _searchUsers(query);
@@ -275,7 +232,6 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       setState(() {
         _searchResults = _searchResults.where((user) => user.id != userId).toList();
         _requestIds.add(userId);
-        _outgoingRequestsMap[userId] = 'pending'; // Track outgoing request
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -592,12 +548,10 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                                       children: [
                                         CircleAvatar(
                                           radius: 20,
-                                          backgroundColor: Colors.grey[700],
-                                          backgroundImage: user.profilePicture != null && user.profilePicture!.isNotEmpty
+                                          backgroundImage: user.profilePicture != null
                                               ? NetworkImage(user.profilePicture!)
                                               : null,
-                                          onBackgroundImageError: user.profilePicture != null ? (_, __) {} : null,
-                                          child: user.profilePicture == null || user.profilePicture!.isEmpty
+                                          child: user.profilePicture == null
                                               ? Text(
                                                   (user.firstName ?? 'U')[0].toUpperCase(),
                                                   style: const TextStyle(
@@ -632,26 +586,11 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                                             ],
                                           ),
                                         ),
-                                        _outgoingRequestsMap.containsKey(user.id) || user.hasOutgoingRequest
-                                            ? const Text(
-                                                'Request Sent',
-                                                style: TextStyle(
-                                                  color: Color(0xFFB3B3B3),
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              )
-                                            : user.hasIncomingRequest
-                                                ? _buildAnimatedButton(
-                                                    label: 'Accept Request',
-                                                    color: const Color(0xFF4CAF50),
-                                                    onPressed: () => _fetchFriendRequests(),
-                                                  )
-                                                : _buildAnimatedButton(
-                                                    label: 'Send Request',
-                                                    color: const Color(0xFF4CAF50),
-                                                    onPressed: () => _sendFriendRequest(user.id),
-                                                  ),
+                                        _buildAnimatedButton(
+                                          label: 'Send Request',
+                                          color: const Color(0xFF4CAF50),
+                                          onPressed: () => _sendFriendRequest(user.id),
+                                        ),
                                       ],
                                     ),
                                   );
@@ -683,12 +622,10 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
           children: [
             CircleAvatar(
               radius: 24,
-              backgroundColor: Colors.grey[700],
-              backgroundImage: user.profilePicture != null && user.profilePicture!.isNotEmpty
+              backgroundImage: user.profilePicture != null
                   ? NetworkImage(user.profilePicture!)
                   : null,
-              onBackgroundImageError: user.profilePicture != null ? (_, __) {} : null,
-              child: user.profilePicture == null || user.profilePicture!.isEmpty
+              child: user.profilePicture == null
                   ? Text(
                       (user.firstName ?? 'U')[0].toUpperCase(),
                       style: const TextStyle(
