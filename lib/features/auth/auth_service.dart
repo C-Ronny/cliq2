@@ -499,5 +499,90 @@ class AuthService {
     }
   }
 
+  Future<Map<String, dynamic>> createVideoRoom({required String name}) async {
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) throw Exception('User not authenticated');
+
+    final roomData = {
+      'name': name,
+      'creator_id': currentUser.id,
+      'participant_ids': [currentUser.id],
+    };
+
+    final response = await supabase
+        .from('video_rooms')
+        .insert(roomData)
+        .select()
+        .single();
+
+    return response;
+  }
+
+  Future<void> joinVideoRoom(String roomId, String userId) async {
+    final room = await supabase
+        .from('video_rooms')
+        .select()
+        .eq('room_id', roomId)
+        .single();
+
+    final participantIds = List<String>.from(room['participant_ids']);
+    if (participantIds.length >= 4) throw Exception('Room is full');
+    if (participantIds.contains(userId)) return; // Already in room
+
+    participantIds.add(userId);
+    await supabase
+        .from('video_rooms')
+        .update({'participant_ids': participantIds})
+        .eq('room_id', roomId);
+  }
+
+  Future<void> leaveVideoRoom(String roomId, String userId) async {
+    final room = await supabase
+        .from('video_rooms')
+        .select()
+        .eq('room_id', roomId)
+        .single();
+
+    final participantIds = List<String>.from(room['participant_ids']);
+    participantIds.remove(userId);
+
+    if (participantIds.isEmpty) {
+      await supabase.from('video_rooms').delete().eq('room_id', roomId);
+    } else {
+      await supabase
+          .from('video_rooms')
+          .update({'participant_ids': participantIds})
+          .eq('room_id', roomId);
+    }
+  }
+
+  Future<void> toggleLockRoom(String roomId, bool lock) async {
+    await supabase
+        .from('video_rooms')
+        .update({'locked': lock})
+        .eq('room_id', roomId);
+  }
+
+  Future<void> sendCallInvite(String roomId, String friendId) async {
+    await supabase.from('call_invites').insert({
+      'room_id': roomId,
+      'invited_user_id': friendId,
+      'status': 'pending',
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getCallInvites() async {
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) throw Exception('User not authenticated');
+
+    final response = await supabase
+        .from('call_invites')
+        .select('*, room_id(name, creator_id, participant_ids)')
+        .eq('invited_user_id', currentUser.id)
+        .eq('status', 'pending');
+
+    return response;
+  }
+
 
 }

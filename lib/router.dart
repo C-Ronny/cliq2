@@ -6,12 +6,23 @@ import 'features/auth/screens/profile_setup_screen.dart';
 import 'features/auth/screens/signup_screen.dart';
 import 'features/auth/screens/splash_screen.dart';
 import 'features/auth/screens/friend_profile_screen.dart';
+import 'features/auth/screens/home_screen.dart';
+import 'features/auth/screens/friends_screen.dart';
+import 'features/profile/screens/profile_screen.dart';
 import 'models/user_model.dart';
 import 'widgets/bottom_nav_bar.dart';
 
 final GoRouter router = GoRouter(
   initialLocation: '/splash',
   routes: [
+    GoRoute(
+      path: '/',
+      redirect: (context, state) => '/main/home', // Redirect / to /main/home
+    ),
+    GoRoute(
+      path: '/main',
+      redirect: (context, state) => '/main/home', // Redirect /main to /main/home
+    ),
     GoRoute(
       path: '/splash',
       builder: (context, state) => const SplashScreen(),
@@ -108,26 +119,67 @@ final GoRouter router = GoRouter(
         );
       },
     ),
-    GoRoute(
-      path: '/main',
-      builder: (context, state) => const MainScreen(),
-      pageBuilder: (context, state) => CustomTransitionPage(
-        key: state.pageKey,
-        child: const MainScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          const begin = Offset(1.0, 0.0);
-          const end = Offset.zero;
-          const curve = Curves.easeInOut;
-          var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-          return SlideTransition(
-            position: animation.drive(tween),
-            child: child,
-          );
-        },
-      ),
+    ShellRoute(
+      builder: (context, state, child) {
+        return MainScreen(state: state, child: child);
+      },
       routes: [
         GoRoute(
-          path: 'friend-profile',
+          path: '/main/home',
+          builder: (context, state) => const HomeScreen(),
+          pageBuilder: (context, state) => CustomTransitionPage(
+            key: state.pageKey,
+            child: const HomeScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              const begin = Offset(1.0, 0.0);
+              const end = Offset.zero;
+              const curve = Curves.easeInOut;
+              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+              return SlideTransition(
+                position: animation.drive(tween),
+                child: child,
+              );
+            },
+          ),
+        ),
+        GoRoute(
+          path: '/main/friends',
+          builder: (context, state) => const FriendsScreen(),
+          pageBuilder: (context, state) => CustomTransitionPage(
+            key: state.pageKey,
+            child: const FriendsScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              const begin = Offset(1.0, 0.0);
+              const end = Offset.zero;
+              const curve = Curves.easeInOut;
+              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+              return SlideTransition(
+                position: animation.drive(tween),
+                child: child,
+              );
+            },
+          ),
+        ),
+        GoRoute(
+          path: '/main/profile',
+          builder: (context, state) => const ProfileScreen(),
+          pageBuilder: (context, state) => CustomTransitionPage(
+            key: state.pageKey,
+            child: const ProfileScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              const begin = Offset(1.0, 0.0);
+              const end = Offset.zero;
+              const curve = Curves.easeInOut;
+              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+              return SlideTransition(
+                position: animation.drive(tween),
+                child: child,
+              );
+            },
+          ),
+        ),
+        GoRoute(
+          path: '/main/friend-profile',
           builder: (context, state) {
             final friend = state.extra as UserModel;
             return FriendProfileScreen(friend: friend);

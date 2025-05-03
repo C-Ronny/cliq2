@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cliq2/config/supabase.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:cliq2/router.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SupabaseConfig.initialize();
+  await dotenv.load(fileName: ".env");
   runApp(const ProviderScope(child: MyApp()));
+
+  // print('Agora App ID: ${const String.fromEnvironment('AGORA_APP_ID')}');
 }
 
 class MyApp extends StatelessWidget {
