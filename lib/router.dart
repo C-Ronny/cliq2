@@ -17,11 +17,11 @@ final GoRouter router = GoRouter(
   routes: [
     GoRoute(
       path: '/',
-      redirect: (context, state) => '/main/home', // Redirect / to /main/home
+      redirect: (context, state) => '/main/home',
     ),
     GoRoute(
       path: '/main',
-      redirect: (context, state) => '/main/home', // Redirect /main to /main/home
+      redirect: (context, state) => '/main/home',
     ),
     GoRoute(
       path: '/splash',
@@ -121,26 +121,55 @@ final GoRouter router = GoRouter(
     ),
     ShellRoute(
       builder: (context, state, child) {
-        return MainScreen(state: state, child: child);
+        return MainScreen(
+          state: state,
+          child: child,
+          updateCallState: (inCall, overlayActive) {
+            // This callback will be passed to children via context
+            // No need to access state directly here
+          },
+        );
       },
       routes: [
         GoRoute(
           path: '/main/home',
-          builder: (context, state) => const HomeScreen(),
-          pageBuilder: (context, state) => CustomTransitionPage(
-            key: state.pageKey,
-            child: const HomeScreen(),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              const begin = Offset(1.0, 0.0);
-              const end = Offset.zero;
-              const curve = Curves.easeInOut;
-              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-              return SlideTransition(
-                position: animation.drive(tween),
-                child: child,
-              );
-            },
-          ),
+          builder: (context, state) {
+            return HomeScreen(
+              updateCallState: (inCall, overlayActive) {
+                // Find the parent MainScreen widget
+                final MainScreen? mainScreen = context.findAncestorWidgetOfExactType<MainScreen>();
+                if (mainScreen != null) {
+                  // Call the updateCallState function passed to MainScreen
+                  mainScreen.updateCallState(inCall, overlayActive);
+                }
+              },
+            );
+          },
+          pageBuilder: (context, state) {
+            return CustomTransitionPage(
+              key: state.pageKey,
+              child: HomeScreen(
+                updateCallState: (inCall, overlayActive) {
+                  // Find the parent MainScreen widget
+                  final MainScreen? mainScreen = context.findAncestorWidgetOfExactType<MainScreen>();
+                  if (mainScreen != null) {
+                    // Call the updateCallState function passed to MainScreen
+                    mainScreen.updateCallState(inCall, overlayActive);
+                  }
+                },
+              ),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                const begin = Offset(1.0, 0.0);
+                const end = Offset.zero;
+                const curve = Curves.easeInOut;
+                var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+                return SlideTransition(
+                  position: animation.drive(tween),
+                  child: child,
+                );
+              },
+            );
+          },
         ),
         GoRoute(
           path: '/main/friends',

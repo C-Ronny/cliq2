@@ -3,9 +3,15 @@ import 'package:go_router/go_router.dart';
 
 class MainScreen extends StatefulWidget {
   final Widget child;
-  final GoRouterState state; // Add GoRouterState as a parameter
+  final GoRouterState state;
+  final Function(bool inCall, bool overlayActive) updateCallState;
 
-  const MainScreen({super.key, required this.child, required this.state});
+  const MainScreen({
+    super.key,
+    required this.child,
+    required this.state,
+    required this.updateCallState,
+  });
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -13,8 +19,9 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   late int _selectedIndex;
-
   static const List<String> _routes = ['/main/home', '/main/friends', '/main/profile'];
+  bool _isInVideoCallState = false;
+  bool _isOverlayActive = false;
 
   @override
   void initState() {
@@ -23,9 +30,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _updateIndexBasedOnRoute() {
-    final location = widget.state.fullPath ?? ''; // Use the passed GoRouterState with default empty string
+    final location = widget.state.fullPath;
     setState(() {
-      _selectedIndex = _routes.indexWhere((route) => location == route || location.startsWith('$route/'));
+      _selectedIndex = _routes.indexWhere((route) => location == route || location?.startsWith('$route/') == true);
       if (_selectedIndex == -1) _selectedIndex = 0;
     });
   }
@@ -37,11 +44,18 @@ class _MainScreenState extends State<MainScreen> {
     context.go(_routes[index]);
   }
 
+  void updateCallState({required bool inCall, required bool overlayActive}) {
+    setState(() {
+      _isInVideoCallState = inCall;
+      _isOverlayActive = overlayActive;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: widget.child,
-      bottomNavigationBar: _selectedIndex == 0 && _isInVideoCallState()
+      bottomNavigationBar: (_selectedIndex == 0 && (_isInVideoCallState || _isOverlayActive))
           ? null
           : BottomNavigationBar(
               items: const <BottomNavigationBarItem>[
@@ -54,9 +68,5 @@ class _MainScreenState extends State<MainScreen> {
               onTap: _onItemTapped,
             ),
     );
-  }
-
-  bool _isInVideoCallState() {
-    return false; // Placeholder, to be updated later
   }
 }

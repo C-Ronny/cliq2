@@ -536,26 +536,6 @@ class AuthService {
         .eq('room_id', roomId);
   }
 
-  Future<void> leaveVideoRoom(String roomId, String userId) async {
-    final room = await supabase
-        .from('video_rooms')
-        .select()
-        .eq('room_id', roomId)
-        .single();
-
-    final participantIds = List<String>.from(room['participant_ids']);
-    participantIds.remove(userId);
-
-    if (participantIds.isEmpty) {
-      await supabase.from('video_rooms').delete().eq('room_id', roomId);
-    } else {
-      await supabase
-          .from('video_rooms')
-          .update({'participant_ids': participantIds})
-          .eq('room_id', roomId);
-    }
-  }
-
   Future<void> toggleLockRoom(String roomId, bool lock) async {
     await supabase
         .from('video_rooms')
@@ -572,17 +552,72 @@ class AuthService {
   }
 
   Future<List<Map<String, dynamic>>> getCallInvites() async {
-    final currentUser = supabase.auth.currentUser;
-    if (currentUser == null) throw Exception('User not authenticated');
+  final currentUser = supabase.auth.currentUser;
+  if (currentUser == null) throw Exception('User not authenticated');
 
-    final response = await supabase
-        .from('call_invites')
-        .select('*, room_id(name, creator_id, participant_ids)')
-        .eq('invited_user_id', currentUser.id)
-        .eq('status', 'pending');
+  final response = await supabase
+      .from('call_invites')
+      .select('*, room_id!inner(name, creator_id!inner(username, first_name, last_name), participant_ids)')
+      .eq('invited_user_id', currentUser.id)
+      .eq('status', 'pending');
 
-    return response;
+  return response;
+}
+
+Future<void> leaveVideoRoom(String roomId, String userId) async {
+  final room = await supabase
+      .from('video_rooms')
+      .select()
+      .eq('room_id', roomId)
+      .single();
+
+  final participantIds = List<String>.from(room['participant_ids']);
+  participantIds.remove(userId);
+
+  if (participantIds.isEmpty) {
+    await supabase.from('video_rooms').delete().eq('room_id', roomId);
+    await supabase.from('call_invites').delete().eq('room_id', roomId);
+  } else {
+    await supabase
+        .from('video_rooms')
+        .update({'participant_ids': participantIds})
+        .eq('room_id', roomId);
   }
+}
+
+  Future<void> acceptCallInvite(String inviteId, String roomId) async {
+  final currentUser = supabase.auth.currentUser;
+  if (currentUser == null) throw Exception('User not authenticated');
+
+  try {
+    // Update invite status to accepted
+    await supabase
+        .from('call_invites')
+        .update({'status': 'accepted'})
+        .eq('id', inviteId)
+        .eq('invited_user_id', currentUser.id);
+
+    // Join the video room
+    await joinVideoRoom(roomId, currentUser.id);
+  } catch (e) {
+    throw Exception('Failed to accept call invite: $e');
+  }
+}
+
+Future<void> declineCallInvite(String inviteId) async {
+  final currentUser = supabase.auth.currentUser;
+  if (currentUser == null) throw Exception('User not authenticated');
+
+  try {
+    await supabase
+        .from('call_invites')
+        .update({'status': 'declined'})
+        .eq('id', inviteId)
+        .eq('invited_user_id', currentUser.id);
+  } catch (e) {
+    throw Exception('Failed to decline call invite: $e');
+  }
+}
 
 
 }
