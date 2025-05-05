@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../auth/auth_service.dart';
 import '../../../models/user_model.dart';
 
@@ -28,6 +28,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic>? _currentRoom;
   RtcEngine? _engine;
   final List<int> _remoteUids = [];
+  bool _isVideoEnabled = true;
+  bool _isAudioEnabled = true;
+  bool _isFrontCamera = true;
+  late final RealtimeChannel _videoRoomsChannel;
+  late final RealtimeChannel _callInvitesChannel;
 
   @override
   void initState() {
@@ -41,7 +46,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _initializeAgora() async {
     try {
-      // Request camera and microphone permissions
       final cameraStatus = await Permission.camera.request();
       final micStatus = await Permission.microphone.request();
 
@@ -66,22 +70,28 @@ class _HomeScreenState extends State<HomeScreen> {
             print('Local user joined channel: ${connection.localUid}');
           },
           onUserJoined: (connection, remoteUid, elapsed) {
-            setState(() {
-              _remoteUids.add(remoteUid);
-            });
+            if (mounted) {
+              setState(() {
+                _remoteUids.add(remoteUid);
+              });
+            }
             print('Remote user joined: $remoteUid');
           },
           onUserOffline: (connection, remoteUid, reason) {
-            setState(() {
-              _remoteUids.remove(remoteUid);
-            });
+            if (mounted) {
+              setState(() {
+                _remoteUids.remove(remoteUid);
+              });
+            }
             print('Remote user left: $remoteUid');
           },
           onError: (err, msg) {
             print('Agora Error: $err, Message: $msg');
-            setState(() {
-              _errorMessage = 'Agora Error: $msg';
-            });
+            if (mounted) {
+              setState(() {
+                _errorMessage = 'Agora Error: $msg';
+              });
+            }
           },
         ),
       );
@@ -90,9 +100,11 @@ class _HomeScreenState extends State<HomeScreen> {
       await _engine!.startPreview();
     } catch (e) {
       print('Agora initialization error: $e');
-      setState(() {
-        _errorMessage = 'Failed to initialize video call: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Failed to initialize video call: $e';
+        });
+      }
     }
   }
 
@@ -105,8 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     print('Setting up real-time subscription for user: ${currentUser.id}');
 
-    // Subscription for call invites
-    _authService.supabase
+    _callInvitesChannel = _authService.supabase
         .channel('call_invites')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -122,19 +133,12 @@ class _HomeScreenState extends State<HomeScreen> {
             _fetchCallInvites();
           },
         )
-        .subscribe((status, [error]) {
-          if (status == 'SUBSCRIBED') {
-            print('Successfully subscribed to call_invites channel');
-          } else {
-            print('Subscription status: $status, Error: $error');
-          }
-        });
+        .subscribe();
 
-    // Subscription for active calls
-    _authService.supabase
+    _videoRoomsChannel = _authService.supabase
         .channel('video_rooms')
         .onPostgresChanges(
-          event: PostgresChangeEvent.all, // Listen for all changes (insert, update, delete)
+          event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'video_rooms',
           callback: (payload) {
@@ -142,16 +146,11 @@ class _HomeScreenState extends State<HomeScreen> {
             _fetchActiveCalls();
           },
         )
-        .subscribe((status, [error]) {
-          if (status == 'SUBSCRIBED') {
-            print('Successfully subscribed to video_rooms channel');
-          } else {
-            print('Subscription status: $status, Error: $error');
-          }
-        });
+        .subscribe();
   }
 
   Future<void> _fetchActiveCalls() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -163,124 +162,75 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final friends = await _authService.getFriends();
       final friendIds = friends.map((friend) => friend.id).toList();
+      friendIds.add(currentUser.id);
 
       final response = await _authService.supabase
           .from('video_rooms')
-          .select('*, creator_id(username, first_name, last_name)')
-          .inFilter('creator_id', friendIds);
+          .select('*, creator_id(id, username, first_name, last_name)')
+          .or(
+            'creator_id.in.(${friendIds.join(',')}),participant_ids.cs.{${currentUser.id}}',
+          );
 
-      setState(() {
-        _activeCalls = response;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-        _isLoading = false;
-      });
-    }
-  }
-
-
-  Future<void> _fetchFriendsForInvite() async {
-    setState(() {
-      _isLoadingFriends = true;
-    });
-
-    try {
-      final friends = await _authService.getFriends();
-      final participantIds = _currentRoom!['participant_ids'] as List<dynamic>;
-      final inviteableFriends = friends.where((friend) => !participantIds.contains(friend.id)).toList();
-
-      setState(() {
-        _friends = inviteableFriends;
-        _isLoadingFriends = false;
-      });
-    } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-        _isLoadingFriends = false;
-      });
-    }
-  }
-
-  Future<void> _startCall() async {
-    final name = await _showCreateCallDialog(context);
-    print('Dialog returned name: $name');
-    if (name != null && name.isNotEmpty) {
-      try {
-        final room = await _authService.createVideoRoom(name: name);
-        print('Created room successfully: $room');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Call created successfully!')),
-        );
-
+      print('Fetched active calls: $response');
+      if (mounted) {
         setState(() {
-          _inCall = true;
-          _currentRoom = room;
-          _showFriendOverlay = true;
+          _activeCalls = response;
+          _isLoading = false;
         });
-        widget.updateCallState(_inCall, _showFriendOverlay);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
-        await _fetchFriendsForInvite();
-
-        await _engine!.joinChannel(
-          token: '',
-          channelId: room['room_id'].toString(),
-          uid: 0,
-          options: const ChannelMediaOptions(
-            clientRoleType: ClientRoleType.clientRoleBroadcaster,
-            channelProfile: ChannelProfileType.channelProfileCommunication,
-          ),
-        );
-      } catch (e) {
-        print('Error creating room: $e');
+  Future<void> _fetchCallInvites() async {
+    try {
+      final invites = await _authService.getCallInvites();
+      print('Fetched call invites: $invites');
+      if (mounted) {
+        setState(() {
+          _callInvites = invites;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
         setState(() {
           _errorMessage = e.toString().replaceFirst('Exception: ', '');
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to create call: $_errorMessage')),
-        );
       }
-    } else {
-      print('No valid name provided');
-    }
-  }
-
-  Future<void> _sendInvite(String friendId) async {
-    try {
-      await _authService.sendCallInvite(_currentRoom!['room_id'], friendId);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invite sent successfully!')),
-      );
-      setState(() {
-        _friends = _friends.where((friend) => friend.id != friendId).toList();
-      });
-    } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send invite: $_errorMessage')),
-      );
     }
   }
 
   Future<void> _acceptInvite(String inviteId, String roomId) async {
     try {
-      await _authService.acceptCallInvite(inviteId, roomId);
-      final room = await _authService.supabase
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser == null) throw Exception('User not authenticated');
+
+      await _authService.supabase
+          .from('call_invites')
+          .update({'status': 'accepted'})
+          .eq('id', inviteId);
+
+      await _authService.joinVideoRoom(roomId, currentUser.id);
+
+      final roomData = await _authService.supabase
           .from('video_rooms')
           .select()
           .eq('room_id', roomId)
           .single();
 
-      setState(() {
-        _inCall = true;
-        _currentRoom = room;
-        _callInvites = _callInvites.where((invite) => invite['id'] != inviteId).toList();
-      });
-      widget.updateCallState(_inCall, _showFriendOverlay);
+      if (mounted) {
+        setState(() {
+          _inCall = true;
+          _currentRoom = roomData;
+        });
+        widget.updateCallState(_inCall, _showFriendOverlay);
+      }
 
       await _engine!.joinChannel(
         token: '',
@@ -291,80 +241,618 @@ class _HomeScreenState extends State<HomeScreen> {
           channelProfile: ChannelProfileType.channelProfileCommunication,
         ),
       );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Joined call successfully!')),
-      );
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to join call: $_errorMessage')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to accept invite: $e')),
+        );
+      }
     }
   }
 
   Future<void> _declineInvite(String inviteId) async {
     try {
-      await _authService.declineCallInvite(inviteId);
-      setState(() {
-        _callInvites = _callInvites.where((invite) => invite['id'] != inviteId).toList();
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invite declined')),
-      );
+      await _authService.supabase
+          .from('call_invites')
+          .update({'status': 'declined'})
+          .eq('id', inviteId);
+
+      if (mounted) {
+        await _fetchCallInvites();
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to decline invite: $_errorMessage')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to decline invite: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _fetchFriendsForInvite() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingFriends = true;
+    });
+
+    try {
+      final friends = await _authService.getFriends();
+      final currentParticipants = _currentRoom != null
+          ? List<String>.from(_currentRoom!['participant_ids'] as List)
+          : <String>[];
+
+      final availableFriends = friends
+          .where((friend) => !currentParticipants.contains(friend.id))
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          _friends = availableFriends;
+          _isLoadingFriends = false;
+        });
+      }
+
+      if (mounted) {
+        await showModalBottomSheet(
+          context: context,
+          builder: (context) => _buildFriendOverlay(),
+        );
+        setState(() {
+          _showFriendOverlay = false;
+        });
+        widget.updateCallState(_inCall, _showFriendOverlay);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingFriends = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to fetch friends: $e')),
+        );
+      }
     }
   }
 
   Future<void> _endCall() async {
     try {
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser == null || _currentRoom == null) return;
+
+      final userId = currentUser.id;
+      final roomId = _currentRoom!['room_id'];
+      final creatorId = _currentRoom!['creator_id']['id'];
+
       await _engine!.leaveChannel();
-      await _authService.leaveVideoRoom(_currentRoom!['room_id'], (await _authService.getCurrentUser())!.id);
-      setState(() {
-        _inCall = false;
-        _showFriendOverlay = false;
-        _currentRoom = null;
-        _remoteUids.clear();
-      });
-      widget.updateCallState(_inCall, _showFriendOverlay);
-      _fetchActiveCalls();
-      _fetchCallInvites();
+      if (mounted) {
+        setState(() {
+          _remoteUids.clear();
+        });
+      }
+
+      if (userId == creatorId) {
+        await _authService.supabase.from('video_rooms').delete().eq('room_id', roomId);
+      } else {
+        final participantIds = List<String>.from(_currentRoom!['participant_ids']);
+        participantIds.remove(userId);
+        await _authService.supabase
+            .from('video_rooms')
+            .update({'participant_ids': participantIds})
+            .eq('room_id', roomId);
+      }
+
+      if (mounted) {
+        setState(() {
+          _inCall = false;
+          _currentRoom = null;
+          _isVideoEnabled = true;
+          _isAudioEnabled = true;
+          _isFrontCamera = true;
+        });
+        widget.updateCallState(_inCall, _showFriendOverlay);
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to end call: $e')),
+        );
+      }
     }
   }
 
-  Future<String?> _showCreateCallDialog(BuildContext context) async {
-    String? callName;
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Create New Call'),
-        content: TextField(
-          decoration: const InputDecoration(labelText: 'Call Name'),
-          onChanged: (value) => callName = value,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+  Widget _buildFriendOverlay() {
+    return Container(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Invite Friends to Call',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, callName),
-            child: const Text('Create'),
-          ),
+          const SizedBox(height: 16),
+          _isLoadingFriends
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)))
+              : _friends.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No friends available to invite.',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    )
+                  : Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _friends.length,
+                        itemBuilder: (context, index) {
+                          final friend = _friends[index];
+                          return ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: Colors.grey[700],
+                              child: Text(
+                                friend.username?.substring(0, 1).toUpperCase() ?? 'U',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            title: Text(
+                              friend.username ?? 'Unknown',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            trailing: ElevatedButton(
+                              onPressed: () async {
+                                try {
+                                  await _authService.sendCallInvite(
+                                    friend.id,
+                                    _currentRoom!['room_id'],
+                                  );
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Invite sent successfully!')),
+                                    );
+                                  }
+                                  Navigator.pop(context);
+                                } catch (e) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Failed to send invite: $e')),
+                                    );
+                                  }
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF4CAF50),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: const Text('Invite'),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
         ],
       ),
+    );
+  }
+
+  Future<void> _startCall() async {
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: Colors.grey[800],
+          title: const Text('Create New Call', style: TextStyle(color: Colors.white)),
+          content: TextField(
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Call Name',
+              hintStyle: TextStyle(color: Colors.grey[400]),
+              enabledBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Colors.white),
+              ),
+              focusedBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Color(0xFF4CAF50)),
+              ),
+            ),
+            onSubmitted: (value) => Navigator.pop(context, value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white)),
+            ),
+            TextButton(
+              onPressed: () {
+                final controller = TextEditingController.fromValue(
+                  TextEditingValue(text: (context.findAncestorWidgetOfExactType<AlertDialog>()?.content as TextField?)?.controller?.text ?? ''),
+                );
+                print('Dialog input: ${controller.text}');
+                Navigator.pop(context, controller.text.isNotEmpty ? controller.text : null);
+              },
+              child: const Text('Create', style: TextStyle(color: Color(0xFF4CAF50))),
+            ),
+          ],
+        ),
+      );
+
+      print('Dialog returned name: $name');
+      if (name == null || name.trim().isEmpty) {
+        print('No valid name provided');
+        return;
+      }
+
+      final room = await _authService.createVideoRoom(name: name);
+      print('Created room successfully: $room');
+
+      final userId = (await _authService.getCurrentUser())!.id;
+      await _authService.joinVideoRoom(room['room_id'], userId);
+
+      if (mounted) {
+        setState(() {
+          _inCall = true;
+          _currentRoom = room;
+        });
+        widget.updateCallState(_inCall, _showFriendOverlay);
+      }
+
+      await _engine!.joinChannel(
+        token: '',
+        channelId: room['room_id'].toString(),
+        uid: 0,
+        options: const ChannelMediaOptions(
+          clientRoleType: ClientRoleType.clientRoleBroadcaster,
+          channelProfile: ChannelProfileType.channelProfileCommunication,
+        ),
+      );
+    } catch (e) {
+      print('Failed to start call: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start call: $e')),
+        );
+      }
+    }
+  }
+
+  Widget _buildCallListView() {
+    return RefreshIndicator(
+      onRefresh: () async {
+        if (mounted) {
+          await _fetchActiveCalls();
+          await _fetchCallInvites();
+        }
+      },
+      child: Column(
+        children: [
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)))
+                : (_activeCalls.isEmpty && _callInvites.isEmpty)
+                    ? const Center(
+                        child: Text(
+                          'No active calls or invites.',
+                          style: TextStyle(color: Colors.white, fontSize: 16),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(16.0),
+                        itemCount: _callInvites.length + _activeCalls.length,
+                        itemBuilder: (context, index) {
+                          if (index < _callInvites.length) {
+                            final invite = _callInvites[index];
+                            final room = invite['room_id'];
+                            if (room == null) {
+                              return Card(
+                                color: Colors.grey[800],
+                                child: ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: Colors.grey[700],
+                                    child: Text(
+                                      'U',
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    'Unknown Call',
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                  subtitle: Text(
+                                    'Invite from Unknown',
+                                    style: TextStyle(color: Colors.grey[400]),
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.check, color: Colors.green),
+                                        onPressed: () => _acceptInvite(invite['id'], invite['room_id'].toString()),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.close, color: Colors.red),
+                                        onPressed: () => _declineInvite(invite['id']),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }
+
+                            final creator = room['creator_id'] != null && room['creator_id'] is Map
+                                ? room['creator_id']
+                                : {'username': 'U', 'first_name': 'Unknown'};
+
+                            return Card(
+                              color: Colors.grey[800],
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: Colors.grey[700],
+                                  child: Text(
+                                    (creator['username'] as String?)?.substring(0, 1).toUpperCase() ?? 'U',
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                                title: Text(
+                                  room['name']?.toString() ?? 'Unknown Call',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                                subtitle: Text(
+                                  'Invite from ${creator['first_name'] ?? 'Unknown'}',
+                                  style: TextStyle(color: Colors.grey[400]),
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.check, color: Colors.green),
+                                      onPressed: () => _acceptInvite(invite['id'], invite['room_id'].toString()),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.close, color: Colors.red),
+                                      onPressed: () => _declineInvite(invite['id']),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          } else {
+                            final call = _activeCalls[index - _callInvites.length];
+                            final creatorData = call['creator_id'] as Map<String, dynamic>?;
+                            final creator = creatorData != null
+                                ? UserModel.fromJson(creatorData)
+                                : UserModel(id: 'unknown', username: 'Unknown', firstName: 'Unknown');
+                            final participantCount = (call['participant_ids'] as List?)?.length ?? 0;
+                            final isLocked = call['locked'] as bool? ?? false;
+                            final isJoinable = !isLocked && participantCount < 4;
+
+                            return Card(
+                              color: Colors.grey[800],
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: Colors.grey[700],
+                                  child: Text(
+                                    creator.username?.substring(0, 1).toUpperCase() ?? 'U',
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                                title: Text(
+                                  call['name']?.toString() ?? 'Unknown Call',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                                subtitle: Text(
+                                  'by ${creator.firstName ?? 'Unknown'} | ${isLocked ? 'Locked' : 'Unlocked'}, $participantCount/4',
+                                  style: TextStyle(color: Colors.grey[400]),
+                                ),
+                                trailing: Icon(
+                                  isJoinable ? Icons.check_circle : Icons.cancel,
+                                  color: isJoinable ? Colors.green : Colors.red,
+                                ),
+                                onTap: isJoinable
+                                    ? () async {
+                                        try {
+                                          final userId = (await _authService.getCurrentUser())!.id;
+                                          await _authService.joinVideoRoom(call['room_id'], userId);
+                                          if (mounted) {
+                                            setState(() {
+                                              _inCall = true;
+                                              _currentRoom = call;
+                                            });
+                                            widget.updateCallState(_inCall, _showFriendOverlay);
+                                          }
+                                          await _engine!.joinChannel(
+                                            token: '',
+                                            channelId: call['room_id'].toString(),
+                                            uid: 0,
+                                            options: const ChannelMediaOptions(
+                                              clientRoleType: ClientRoleType.clientRoleBroadcaster,
+                                              channelProfile: ChannelProfileType.channelProfileCommunication,
+                                            ),
+                                          );
+                                        } catch (e) {
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(content: Text('Failed to join call: $e')),
+                                            );
+                                          }
+                                        }
+                                      }
+                                    : null,
+                              ),
+                            );
+                          }
+                        },
+                      ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: ElevatedButton(
+              onPressed: _startCall,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4CAF50),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Start Call'),
+            ),
+          ),
+          if (_errorMessage != null)
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text(
+                _errorMessage!,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoCallInterface() {
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            children: [
+              if (_engine != null && _errorMessage == null)
+                AgoraVideoView(
+                  controller: VideoViewController(
+                    rtcEngine: _engine!,
+                    canvas: const VideoCanvas(uid: 0), // Local video
+                  ),
+                )
+              else
+                Center(
+                  child: Text(
+                    _errorMessage ?? 'Initializing video...',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              if (_remoteUids.isNotEmpty && _currentRoom != null && _errorMessage == null)
+                ..._remoteUids.map((remoteUid) {
+                  return Positioned.fill(
+                    child: AgoraVideoView(
+                      controller: VideoViewController(
+                        rtcEngine: _engine!,
+                        canvas: VideoCanvas(uid: remoteUid), // Remote video
+                      ),
+                    ),
+                  );
+                }).toList(),
+              if (_remoteUids.isNotEmpty && _currentRoom != null && _errorMessage == null)
+                ..._remoteUids.map((remoteUid) {
+                  final participantId = _getParticipantIdFromUid(remoteUid);
+                  final participantName = _getParticipantName(participantId);
+                  return Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      color: Colors.black54,
+                      child: Text(
+                        participantName ?? 'Unknown',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  );
+                }).toList(),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      _isVideoEnabled ? Icons.videocam : Icons.videocam_off,
+                      color: Colors.white,
+                    ),
+                    onPressed: () {
+                      if (mounted) {
+                        setState(() {
+                          _isVideoEnabled = !_isVideoEnabled;
+                        });
+                        if (_isVideoEnabled) {
+                          _engine!.enableVideo();
+                        } else {
+                          _engine!.disableVideo();
+                        }
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      _isAudioEnabled ? Icons.mic : Icons.mic_off,
+                      color: Colors.white,
+                    ),
+                    onPressed: () {
+                      if (mounted) {
+                        setState(() {
+                          _isAudioEnabled = !_isAudioEnabled;
+                        });
+                        _engine!.muteLocalAudioStream(!_isAudioEnabled);
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.flip_camera_android, color: Colors.white),
+                    onPressed: () {
+                      if (mounted) {
+                        setState(() {
+                          _isFrontCamera = !_isFrontCamera;
+                        });
+                        _engine!.switchCamera();
+                      }
+                    },
+                  ),
+                ],
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton(
+                    onPressed: () {
+                      if (mounted) {
+                        setState(() {
+                          _showFriendOverlay = true;
+                        });
+                        widget.updateCallState(_inCall, _showFriendOverlay);
+                        _fetchFriendsForInvite();
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4CAF50),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Invite Friends'),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton(
+                    onPressed: _endCall,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.redAccent,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('End Call'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _inCall ? _buildVideoCallInterface() : _buildCallListView(),
     );
   }
 
@@ -372,376 +860,24 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _engine?.leaveChannel();
     _engine?.release();
-    _authService.supabase.channel('call_invites').unsubscribe();
+    _callInvitesChannel.unsubscribe();
+    _videoRoomsChannel.unsubscribe();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      body: Stack(
-        children: [
-          SafeArea(
-            child: _inCall ? _buildVideoCallInterface() : _buildCallListView(),
-          ),
-          if (_showFriendOverlay) _buildFriendOverlay(),
-        ],
-      ),
+  String? _getParticipantIdFromUid(int uid) {
+    return _currentRoom?['participant_ids']?.firstWhere(
+      (id) => _remoteUids.contains(uid), // Simplified; improve with actual UID mapping
+      orElse: () => null,
     );
   }
 
-  Future<void> _fetchCallInvites() async {
-    try {
-      final invites = await _authService.getCallInvites();
-      setState(() {
-        _callInvites = invites;
-      });
-    } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-      });
-    }
-  }
-
-Widget _buildCallListView() {
-  return Column(
-    children: [
-      Expanded(
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)))
-            : (_activeCalls.isEmpty && _callInvites.isEmpty)
-                ? const Center(
-                    child: Text(
-                      'No active calls or invites.',
-                      style: TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16.0),
-                    itemCount: _callInvites.length + _activeCalls.length,
-                    itemBuilder: (context, index) {
-                      if (index < _callInvites.length) {
-                        final invite = _callInvites[index];
-                        final room = invite['room_id'];
-                        if (room == null) {
-                          return Card(
-                            color: Colors.grey[800],
-                            child: ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: Colors.grey[700],
-                                child: Text(
-                                  'U',
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                              ),
-                              title: Text(
-                                'Unknown Call',
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                              subtitle: Text(
-                                'Invite from Unknown',
-                                style: TextStyle(color: Colors.grey[400]),
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.check, color: Colors.green),
-                                    onPressed: () => _acceptInvite(invite['id'], invite['room_id'].toString()),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.close, color: Colors.red),
-                                    onPressed: () => _declineInvite(invite['id']),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }
-
-                        final creator = room['creator_id'] != null && room['creator_id'] is Map
-                            ? room['creator_id']
-                            : {'username': 'U', 'first_name': 'Unknown'};
-
-                        return Card(
-                          color: Colors.grey[800],
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.grey[700],
-                              child: Text(
-                                (creator['username'] as String?)?.substring(0, 1).toUpperCase() ?? 'U',
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                            ),
-                            title: Text(
-                              room['name']?.toString() ?? 'Unknown Call',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            subtitle: Text(
-                              'Invite from ${creator['first_name'] ?? 'Unknown'}',
-                              style: TextStyle(color: Colors.grey[400]),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.check, color: Colors.green),
-                                  onPressed: () => _acceptInvite(invite['id'], invite['room_id'].toString()),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.close, color: Colors.red),
-                                  onPressed: () => _declineInvite(invite['id']),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      } else {
-                        final call = _activeCalls[index - _callInvites.length];
-                        final creator = UserModel.fromJson(call['creator_id']);
-                        final participantCount = call['participant_ids'].length;
-                        final isLocked = call['locked'];
-                        final isJoinable = !isLocked && participantCount < 4;
-
-                        return Card(
-                          color: Colors.grey[800],
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.grey[700],
-                              child: Text(
-                                creator.username?.substring(0, 1).toUpperCase() ?? 'U',
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                            ),
-                            title: Text(
-                              call['name'],
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            subtitle: Text(
-                              'by ${creator.firstName ?? 'Unknown'} | ${isLocked ? 'Locked' : 'Unlocked'}, $participantCount/4',
-                              style: TextStyle(color: Colors.grey[400]),
-                            ),
-                            trailing: Icon(
-                              isJoinable ? Icons.check_circle : Icons.cancel,
-                              color: isJoinable ? Colors.green : Colors.red,
-                            ),
-                            onTap: isJoinable
-                                ? () async {
-                                    try {
-                                      final userId = (await _authService.getCurrentUser())!.id;
-                                      await _authService.joinVideoRoom(call['room_id'], userId);
-                                      setState(() {
-                                        _inCall = true;
-                                        _currentRoom = call;
-                                      });
-                                      widget.updateCallState(_inCall, _showFriendOverlay);
-                                      await _engine!.joinChannel(
-                                        token: '',
-                                        channelId: call['room_id'].toString(),
-                                        uid: 0,
-                                        options: const ChannelMediaOptions(
-                                          clientRoleType: ClientRoleType.clientRoleBroadcaster,
-                                          channelProfile: ChannelProfileType.channelProfileCommunication,
-                                        ),
-                                      );
-                                    } catch (e) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text('Failed to join call: $e')),
-                                      );
-                                    }
-                                  }
-                                : null,
-                          ),
-                        );
-                      }
-                    },
-                  ),
-      ),
-      Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: ElevatedButton(
-          onPressed: _startCall,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF4CAF50),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          child: const Text('Start Call'),
-        ),
-      ),
-      if (_errorMessage != null)
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Text(
-            _errorMessage!,
-            style: const TextStyle(color: Colors.redAccent, fontSize: 14),
-          ),
-        ),
-    ],
-  );
-}
-
-
-  Widget _buildVideoCallInterface() {
-  return Column(
-    children: [
-      Expanded(
-        child: Stack(
-          children: [
-            _engine != null && _errorMessage == null
-                ? AgoraVideoView(
-                    controller: VideoViewController(
-                      rtcEngine: _engine!,
-                      canvas: const VideoCanvas(uid: 0),
-                    ),
-                  )
-                : Center(
-                    child: Text(
-                      _errorMessage ?? 'Initializing video...',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-            if (_remoteUids.isNotEmpty && _errorMessage == null)
-              GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                ),
-                itemCount: _remoteUids.length,
-                itemBuilder: (context, index) {
-                  return AgoraVideoView(
-                    controller: VideoViewController(
-                      rtcEngine: _engine!,
-                      canvas: VideoCanvas(uid: _remoteUids[index]),
-                    ),
-                  );
-                },
-              ),
-          ],
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  _showFriendOverlay = true;
-                });
-                widget.updateCallState(_inCall, _showFriendOverlay);
-                _fetchFriendsForInvite();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4CAF50),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('Invite Friends'),
-            ),
-            const SizedBox(width: 16),
-            ElevatedButton(
-              onPressed: _endCall,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('End Call'),
-            ),
-          ],
-        ),
-      ),
-    ],
-  );
-}
-
-  Widget _buildFriendOverlay() {
-    return Container(
-      color: Colors.black.withOpacity(0.9),
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Text(
-                'Invite Friends to ${_currentRoom!['name']}',
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ),
-            Expanded(
-              child: _isLoadingFriends
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)))
-                  : _friends.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No friends available to invite.',
-                            style: TextStyle(color: Colors.white, fontSize: 16),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(16.0),
-                          itemCount: _friends.length,
-                          itemBuilder: (context, index) {
-                            final friend = _friends[index];
-                            return Card(
-                              color: Colors.grey[800],
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: Colors.grey[700],
-                                  child: Text(
-                                    friend.username?.substring(0, 1).toUpperCase() ?? 'U',
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                ),
-                                title: Text(
-                                  friend.username ?? 'No username',
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                                subtitle: Text(
-                                  '${friend.firstName ?? 'Unknown'} ${friend.lastName ?? ''}',
-                                  style: TextStyle(color: Colors.grey[400]),
-                                ),
-                                trailing: ElevatedButton(
-                                  onPressed: () => _sendInvite(friend.id),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF4CAF50),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                  ),
-                                  child: const Text('Invite'),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: ElevatedButton(
-                onPressed: () {
-                  setState(() {
-                    _showFriendOverlay = false;
-                  });
-                  widget.updateCallState(_inCall, _showFriendOverlay);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey[600],
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: const Text('Done'),
-              ),
-            ),
-            if (_errorMessage != null)
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 14),
-                ),
-              ),
-          ],
-        ),
-      ),
+  String? _getParticipantName(String? participantId) {
+    if (participantId == null) return null;
+    final user = _friends.firstWhere(
+      (friend) => friend.id == participantId,
+      orElse: () => UserModel(id: participantId, username: 'Unknown'),
     );
+    return user.username;
   }
 }

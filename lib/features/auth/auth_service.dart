@@ -517,6 +517,7 @@ class AuthService {
 
     return response;
   }
+  
 
   Future<void> joinVideoRoom(String roomId, String userId) async {
     final room = await supabase
@@ -552,17 +553,17 @@ class AuthService {
   }
 
   Future<List<Map<String, dynamic>>> getCallInvites() async {
-  final currentUser = supabase.auth.currentUser;
-  if (currentUser == null) throw Exception('User not authenticated');
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) throw Exception('User not authenticated');
 
-  final response = await supabase
-      .from('call_invites')
-      .select('*, room_id!inner(name, creator_id!inner(username, first_name, last_name), participant_ids)')
-      .eq('invited_user_id', currentUser.id)
-      .eq('status', 'pending');
+    final response = await supabase
+        .from('call_invites')
+        .select('*, room_id(name, creator_id(username, first_name, last_name), participant_ids)') 
+        .eq('invited_user_id', currentUser.id)
+        .eq('status', 'pending');
 
-  return response;
-}
+    return response;
+  }
 
 Future<void> leaveVideoRoom(String roomId, String userId) async {
   final room = await supabase
