@@ -70,29 +70,34 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _engine!.registerEventHandler(
         RtcEngineEventHandler(
-          onJoinChannelSuccess: (connection, elapsed) {
+          onJoinChannelSuccess: (connection, elapsed) async {
             print('Local user joined channel: ${connection.localUid}');
+            final userId = (await _authService.getCurrentUser())?.id;
+            if (userId != null && _currentRoom != null && connection.localUid != null) {
+              _uidToUserIdMap[connection.localUid!] = userId; // Map local UID
+            }
           },
           onUserJoined: (connection, remoteUid, elapsed) {
+            print('Remote user joined: $remoteUid');
             if (mounted) {
               setState(() {
                 _remoteUids.add(remoteUid);
-                // Map remoteUid to a participant ID (simplified mapping)
+                // Assign remoteUid to the next available participant ID
                 if (_currentRoom != null && _currentRoom!['participant_ids'] is List) {
                   final participantIds = List<String>.from(_currentRoom!['participant_ids']);
-                  if (participantIds.length > _remoteUids.length - 1) { // -1 to account for local user
-                    _uidToUserIdMap[remoteUid] = participantIds[_remoteUids.length - 1];
+                  final availableIds = participantIds.where((id) => !_uidToUserIdMap.values.contains(id)).toList();
+                  if (availableIds.isNotEmpty) {
+                    _uidToUserIdMap[remoteUid] = availableIds.first; // Assign first available ID
                   }
                 }
               });
             }
-            print('Remote user joined: $remoteUid');
           },
           onUserOffline: (connection, remoteUid, reason) {
             if (mounted) {
               setState(() {
                 _remoteUids.remove(remoteUid);
-                _uidToUserIdMap.remove(remoteUid); // Clean up the map
+                _uidToUserIdMap.remove(remoteUid);
               });
             }
             print('Remote user left: $remoteUid');
@@ -172,15 +177,11 @@ class _HomeScreenState extends State<HomeScreen> {
       final currentUser = await _authService.getCurrentUser();
       if (currentUser == null) throw Exception('User not authenticated');
 
-      final friends = await _authService.getFriends();
-      final friendIds = friends.map((friend) => friend.id).toList();
-      friendIds.add(currentUser.id);
-
       final response = await _authService.supabase
           .from('video_rooms')
           .select('*, creator_id(id, username, first_name, last_name)')
           .or(
-            'creator_id.in.(${friendIds.join(',')}),participant_ids.cs.{${currentUser.id}}',
+            'participant_ids.cs.{${currentUser.id}}', // Only fetch rooms where the user is a participant
           );
 
       print('Fetched active calls: $response');
@@ -253,9 +254,11 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       widget.updateCallState(_inCall, _showFriendOverlay);
 
+      final channelId = validRoomId; // Use room_id as channelId
+      print('Joining Agora channel with channelId: $channelId');
       await _engine!.joinChannel(
         token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=',
-        channelId: validRoomId, // Use the validated room ID as channel ID
+        channelId: channelId,
         uid: 0,
         options: const ChannelMediaOptions(
           clientRoleType: ClientRoleType.clientRoleBroadcaster,
@@ -558,10 +561,11 @@ class _HomeScreenState extends State<HomeScreen> {
       widget.updateCallState(_inCall, _showFriendOverlay);
       print('Updated state: inCall=$_inCall, currentRoom=$_currentRoom');
 
-      print('Joining Agora channel with channelId: test-channel');
+      final channelId = _currentRoom!['room_id'].toString(); // Use room_id as channelId
+      print('Joining Agora channel with channelId: $channelId');
       await _engine!.joinChannel(
-        token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=', 
-        channelId: '6fbf2598-5468-49cb-b87c-4f0b8a38a491', 
+        token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=',
+        channelId: channelId,
         uid: 0,
         options: const ChannelMediaOptions(
           clientRoleType: ClientRoleType.clientRoleBroadcaster,
@@ -569,7 +573,7 @@ class _HomeScreenState extends State<HomeScreen> {
           autoSubscribeVideo: true,
           autoSubscribeAudio: true,
         ),
-      );      
+      );
       print('Successfully joined Agora channel');
     } catch (e) {
       print('Error in _startCall: $e');
@@ -580,7 +584,7 @@ class _HomeScreenState extends State<HomeScreen> {
           action: SnackBarAction(
             label: 'Retry',
             textColor: Colors.white,
-            onPressed: () => _startCall(), // Retry action
+            onPressed: _startCall,
           ),
         ),
       );
