@@ -31,8 +31,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isVideoEnabled = true;
   bool _isAudioEnabled = true;
   bool _isFrontCamera = true;
+  bool _isCreator = false;
+  final Map<int, String> _uidToUserIdMap = {};
   late final RealtimeChannel _videoRoomsChannel;
   late final RealtimeChannel _callInvitesChannel;
+  
+  
 
   @override
   void initState() {
@@ -73,6 +77,13 @@ class _HomeScreenState extends State<HomeScreen> {
             if (mounted) {
               setState(() {
                 _remoteUids.add(remoteUid);
+                // Map remoteUid to a participant ID (simplified mapping)
+                if (_currentRoom != null && _currentRoom!['participant_ids'] is List) {
+                  final participantIds = List<String>.from(_currentRoom!['participant_ids']);
+                  if (participantIds.length > _remoteUids.length - 1) { // -1 to account for local user
+                    _uidToUserIdMap[remoteUid] = participantIds[_remoteUids.length - 1];
+                  }
+                }
               });
             }
             print('Remote user joined: $remoteUid');
@@ -81,6 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (mounted) {
               setState(() {
                 _remoteUids.remove(remoteUid);
+                _uidToUserIdMap.remove(remoteUid); // Clean up the map
               });
             }
             print('Remote user left: $remoteUid');
@@ -208,45 +220,63 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _acceptInvite(String inviteId, String roomId) async {
     try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Accepting invite...')),
+      );
       final currentUser = await _authService.getCurrentUser();
       if (currentUser == null) throw Exception('User not authenticated');
 
-      await _authService.supabase
+      // Fetch the invite to get the correct room ID
+      final invite = await _authService.supabase
           .from('call_invites')
-          .update({'status': 'accepted'})
-          .eq('id', inviteId);
+          .select('room_id')
+          .eq('id', inviteId)
+          .eq('invited_user_id', currentUser.id)
+          .maybeSingle();
+      if (invite == null || invite['room_id'] == null) {
+        throw Exception('Invalid invite or room ID');
+      }
+      final validRoomId = invite['room_id'].toString();
 
-      await _authService.joinVideoRoom(roomId, currentUser.id);
+      await _authService.acceptCallInvite(inviteId, validRoomId);
 
       final roomData = await _authService.supabase
           .from('video_rooms')
           .select()
-          .eq('room_id', roomId)
+          .eq('room_id', validRoomId)
           .single();
 
-      if (mounted) {
-        setState(() {
-          _inCall = true;
-          _currentRoom = roomData;
-        });
-        widget.updateCallState(_inCall, _showFriendOverlay);
-      }
+      setState(() {
+        _inCall = true;
+        _currentRoom = roomData;
+        _isCreator = roomData['creator_id'] == currentUser.id;
+      });
+      widget.updateCallState(_inCall, _showFriendOverlay);
 
       await _engine!.joinChannel(
-        token: '',
-        channelId: roomId,
+        token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=',
+        channelId: validRoomId, // Use the validated room ID as channel ID
         uid: 0,
         options: const ChannelMediaOptions(
           clientRoleType: ClientRoleType.clientRoleBroadcaster,
           channelProfile: ChannelProfileType.channelProfileCommunication,
+          autoSubscribeVideo: true,
+          autoSubscribeAudio: true,
         ),
       );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to accept invite: $e')),
-        );
-      }
+      print('Error in _acceptInvite: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to accept invite: ${e.toString().replaceAll('Exception: ', '')}'),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () => _acceptInvite(inviteId, roomId),
+          ),
+        ),
+      );
     }
   }
 
@@ -275,7 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _isLoadingFriends = true;
     });
 
-    try {
+    try {      
       final friends = await _authService.getFriends();
       final currentParticipants = _currentRoom != null
           ? List<String>.from(_currentRoom!['participant_ids'] as List)
@@ -308,7 +338,16 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoadingFriends = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to fetch friends: $e')),
+          SnackBar(
+            content: Text('Failed to fetch friends: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: const Color(0xFF4CAF50),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: _fetchFriendsForInvite,
+            ),
+          ),
         );
       }
     }
@@ -316,12 +355,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _endCall() async {
     try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ending call...')),
+      );
       final currentUser = await _authService.getCurrentUser();
-      if (currentUser == null || _currentRoom == null) return;
+      if (currentUser == null || _currentRoom == null) {
+        throw Exception('User or room data unavailable');
+      }
 
       final userId = currentUser.id;
       final roomId = _currentRoom!['room_id'];
-      final creatorId = _currentRoom!['creator_id']['id'];
+      final creatorId = _currentRoom!['creator_id'];
 
       await _engine!.leaveChannel();
       if (mounted) {
@@ -350,19 +394,27 @@ class _HomeScreenState extends State<HomeScreen> {
           _isFrontCamera = true;
         });
         widget.updateCallState(_inCall, _showFriendOverlay);
-      }
+      }      
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to end call: $e')),
-        );
-      }
+      print('Error in _endCall: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to end call: ${e.toString().replaceAll('Exception: ', '')}'),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: _endCall,
+          ),
+        ),
+      );
     }
   }
 
   Widget _buildFriendOverlay() {
     return Container(
       padding: const EdgeInsets.all(16.0),
+      color: const Color.fromARGB(255, 171, 171, 171),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -411,7 +463,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   );
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Invite sent successfully!')),
+                                      const SnackBar(content: Text('Invite sent!')),
                                     );
                                   }
                                   Navigator.pop(context);
@@ -440,12 +492,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startCall() async {
     try {
+      final TextEditingController _nameController = TextEditingController();
       final name = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
           backgroundColor: Colors.grey[800],
           title: const Text('Create New Call', style: TextStyle(color: Colors.white)),
           content: TextField(
+            controller: _nameController,
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
               hintText: 'Call Name',
@@ -457,7 +511,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderSide: BorderSide(color: Color(0xFF4CAF50)),
               ),
             ),
-            onSubmitted: (value) => Navigator.pop(context, value),
           ),
           actions: [
             TextButton(
@@ -466,11 +519,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             TextButton(
               onPressed: () {
-                final controller = TextEditingController.fromValue(
-                  TextEditingValue(text: (context.findAncestorWidgetOfExactType<AlertDialog>()?.content as TextField?)?.controller?.text ?? ''),
-                );
-                print('Dialog input: ${controller.text}');
-                Navigator.pop(context, controller.text.isNotEmpty ? controller.text : null);
+                final enteredName = _nameController.text.trim();
+                Navigator.pop(context, enteredName.isNotEmpty ? enteredName : null);
               },
               child: const Text('Create', style: TextStyle(color: Color(0xFF4CAF50))),
             ),
@@ -480,40 +530,108 @@ class _HomeScreenState extends State<HomeScreen> {
 
       print('Dialog returned name: $name');
       if (name == null || name.trim().isEmpty) {
-        print('No valid name provided');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter a valid call name'),
+            duration: Duration(seconds: 3),
+          ),
+        );
         return;
       }
 
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Creating call...')),
+      );
+      print('Creating video room with name: $name');
       final room = await _authService.createVideoRoom(name: name);
       print('Created room successfully: $room');
 
       final userId = (await _authService.getCurrentUser())!.id;
+      print('Joining room with userId: $userId');
       await _authService.joinVideoRoom(room['room_id'], userId);
 
-      if (mounted) {
-        setState(() {
-          _inCall = true;
-          _currentRoom = room;
-        });
-        widget.updateCallState(_inCall, _showFriendOverlay);
-      }
+      setState(() {
+        _inCall = true;
+        _currentRoom = room;
+        _isCreator = true;
+      });
+      widget.updateCallState(_inCall, _showFriendOverlay);
+      print('Updated state: inCall=$_inCall, currentRoom=$_currentRoom');
 
+      print('Joining Agora channel with channelId: test-channel');
       await _engine!.joinChannel(
-        token: '',
-        channelId: room['room_id'].toString(),
+        token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=', 
+        channelId: '6fbf2598-5468-49cb-b87c-4f0b8a38a491', 
         uid: 0,
         options: const ChannelMediaOptions(
           clientRoleType: ClientRoleType.clientRoleBroadcaster,
           channelProfile: ChannelProfileType.channelProfileCommunication,
+          autoSubscribeVideo: true,
+          autoSubscribeAudio: true,
+        ),
+      );      
+      print('Successfully joined Agora channel');
+    } catch (e) {
+      print('Error in _startCall: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start call: ${e.toString().replaceAll('Exception: ', '')}'),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () => _startCall(), // Retry action
+          ),
         ),
       );
-    } catch (e) {
-      print('Failed to start call: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start call: $e')),
-        );
+    }
+  }
+
+  Future<void> _leaveCall() async {
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Leaving call...')),
+      );
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser == null || _currentRoom == null) {
+        throw Exception('User or room data unavailable');
       }
+
+      final userId = currentUser.id;
+      final roomId = _currentRoom!['room_id'];
+
+      await _engine!.leaveChannel();
+      if (mounted) {
+        setState(() {
+          _remoteUids.clear();
+        });
+      }
+
+      await _authService.leaveVideoRoom(roomId, userId);
+
+      if (mounted) {
+        setState(() {
+          _inCall = false;
+          _currentRoom = null;
+          _isVideoEnabled = true;
+          _isAudioEnabled = true;
+          _isFrontCamera = true;
+        });
+        widget.updateCallState(_inCall, _showFriendOverlay);
+      }      
+    } catch (e) {
+      print('Error in _leaveCall: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to leave call: ${e.toString().replaceAll('Exception: ', '')}'),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: _leaveCall,
+          ),
+        ),
+      );
     }
   }
 
@@ -550,18 +668,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                 child: ListTile(
                                   leading: CircleAvatar(
                                     backgroundColor: Colors.grey[700],
-                                    child: Text(
+                                    child: const Text(
                                       'U',
-                                      style: const TextStyle(color: Colors.white),
+                                      style: TextStyle(color: Colors.white),
                                     ),
                                   ),
-                                  title: Text(
+                                  title: const Text(
                                     'Unknown Call',
-                                    style: const TextStyle(color: Colors.white),
+                                    style: TextStyle(color: Colors.white),
                                   ),
-                                  subtitle: Text(
+                                  subtitle: const Text(
                                     'Invite from Unknown',
-                                    style: TextStyle(color: Colors.grey[400]),
+                                    style: TextStyle(color: Color.fromARGB(255, 41, 41, 41)),
                                   ),
                                   trailing: Row(
                                     mainAxisSize: MainAxisSize.min,
@@ -596,7 +714,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                                 title: Text(
                                   room['name']?.toString() ?? 'Unknown Call',
-                                  style: const TextStyle(color: Colors.white),
+                                  style: TextStyle(color: Colors.white),
                                 ),
                                 subtitle: Text(
                                   'Invite from ${creator['first_name'] ?? 'Unknown'}',
@@ -639,7 +757,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                                 title: Text(
                                   call['name']?.toString() ?? 'Unknown Call',
-                                  style: const TextStyle(color: Colors.white),
+                                  style: TextStyle(color: Colors.white),
                                 ),
                                 subtitle: Text(
                                   'by ${creator.firstName ?? 'Unknown'} | ${isLocked ? 'Locked' : 'Unlocked'}, $participantCount/4',
@@ -650,35 +768,38 @@ class _HomeScreenState extends State<HomeScreen> {
                                   color: isJoinable ? Colors.green : Colors.red,
                                 ),
                                 onTap: isJoinable
-                                    ? () async {
-                                        try {
-                                          final userId = (await _authService.getCurrentUser())!.id;
-                                          await _authService.joinVideoRoom(call['room_id'], userId);
-                                          if (mounted) {
-                                            setState(() {
-                                              _inCall = true;
-                                              _currentRoom = call;
-                                            });
-                                            widget.updateCallState(_inCall, _showFriendOverlay);
-                                          }
-                                          await _engine!.joinChannel(
-                                            token: '',
-                                            channelId: call['room_id'].toString(),
-                                            uid: 0,
-                                            options: const ChannelMediaOptions(
-                                              clientRoleType: ClientRoleType.clientRoleBroadcaster,
-                                              channelProfile: ChannelProfileType.channelProfileCommunication,
-                                            ),
+                                  ? () async {
+                                      try {
+                                        final userId = (await _authService.getCurrentUser())!.id;
+                                        await _authService.joinVideoRoom(call['room_id'], userId);
+                                        if (mounted) {
+                                          setState(() {
+                                            _inCall = true;
+                                            _currentRoom = call;
+                                            _isCreator = call['creator_id'] == userId;
+                                          });
+                                          widget.updateCallState(_inCall, _showFriendOverlay);
+                                        }
+                                        await _engine!.joinChannel(
+                                          token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=', 
+                                          channelId: '6fbf2598-5468-49cb-b87c-4f0b8a38a491', 
+                                          uid: 0,
+                                          options: const ChannelMediaOptions(
+                                            clientRoleType: ClientRoleType.clientRoleBroadcaster,
+                                            channelProfile: ChannelProfileType.channelProfileCommunication,
+                                            autoSubscribeVideo: true,
+                                            autoSubscribeAudio: true,
+                                          ),
+                                        );
+                                      } catch (e) {
+                                        if (mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text('Failed to join call: $e')),
                                           );
-                                        } catch (e) {
-                                          if (mounted) {
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(content: Text('Failed to join call: $e')),
-                                            );
-                                          }
                                         }
                                       }
-                                    : null,
+                                    }
+                                  : null,
                               ),
                             );
                           }
@@ -710,16 +831,24 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildVideoCallInterface() {
+    final currentRoomParticipants = _currentRoom != null
+        ? List<String>.from(_currentRoom!['participant_ids'] as List)
+        : <String>[];
+
     return Column(
       children: [
         Expanded(
           child: Stack(
             children: [
               if (_engine != null && _errorMessage == null)
-                AgoraVideoView(
-                  controller: VideoViewController(
-                    rtcEngine: _engine!,
-                    canvas: const VideoCanvas(uid: 0), // Local video
+                Container(
+                  color: Colors.black,
+                  child: AgoraVideoView(
+                    controller: VideoViewController(
+                      rtcEngine: _engine!,
+                      canvas: const VideoCanvas(uid: 0),
+                      useAndroidSurfaceView: true,
+                    ),
                   ),
                 )
               else
@@ -729,34 +858,50 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(color: Colors.white),
                   ),
                 ),
-              if (_remoteUids.isNotEmpty && _currentRoom != null && _errorMessage == null)
-                ..._remoteUids.map((remoteUid) {
-                  return Positioned.fill(
-                    child: AgoraVideoView(
-                      controller: VideoViewController(
-                        rtcEngine: _engine!,
-                        canvas: VideoCanvas(uid: remoteUid), // Remote video
-                      ),
-                    ),
-                  );
-                }).toList(),
-              if (_remoteUids.isNotEmpty && _currentRoom != null && _errorMessage == null)
-                ..._remoteUids.map((remoteUid) {
-                  final participantId = _getParticipantIdFromUid(remoteUid);
-                  final participantName = _getParticipantName(participantId);
-                  return Positioned(
-                    top: 10,
-                    right: 10,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      color: Colors.black54,
-                      child: Text(
-                        participantName ?? 'Unknown',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ),
-                  );
-                }).toList(),
+              if (_remoteUids.isNotEmpty && _errorMessage == null)
+                GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemCount: _remoteUids.length,
+                  itemBuilder: (context, index) {
+                    final remoteUid = _remoteUids[index];
+                    final userId = _uidToUserIdMap[remoteUid];
+                    if (userId != null && currentRoomParticipants.contains(userId)) {
+                      return Container(
+                        color: Colors.black,
+                        child: AgoraVideoView(
+                          controller: VideoViewController(
+                            rtcEngine: _engine!,
+                            canvas: VideoCanvas(uid: remoteUid),
+                            useAndroidSurfaceView: true,
+                          ),
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+              Positioned(
+                top: 16,
+                left: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: () async {
+                    if (_isCreator) {
+                      await _endCall();
+                    } else {
+                      await _leaveCall();
+                    }
+                    setState(() {
+                      _inCall = false;
+                    });
+                    widget.updateCallState(_inCall, _showFriendOverlay);
+                  },
+                ),
+              ),
             ],
           ),
         ),
@@ -773,15 +918,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: Colors.white,
                     ),
                     onPressed: () {
-                      if (mounted) {
-                        setState(() {
-                          _isVideoEnabled = !_isVideoEnabled;
-                        });
-                        if (_isVideoEnabled) {
-                          _engine!.enableVideo();
-                        } else {
-                          _engine!.disableVideo();
-                        }
+                      setState(() {
+                        _isVideoEnabled = !_isVideoEnabled;
+                      });
+                      if (_isVideoEnabled) {
+                        _engine!.enableVideo();
+                        _engine!.startPreview();
+                      } else {
+                        _engine!.disableVideo();
+                        _engine!.stopPreview();
                       }
                     },
                   ),
@@ -791,23 +936,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: Colors.white,
                     ),
                     onPressed: () {
-                      if (mounted) {
-                        setState(() {
-                          _isAudioEnabled = !_isAudioEnabled;
-                        });
-                        _engine!.muteLocalAudioStream(!_isAudioEnabled);
-                      }
+                      setState(() {
+                        _isAudioEnabled = !_isAudioEnabled;
+                      });
+                      _engine!.muteLocalAudioStream(!_isAudioEnabled);
                     },
                   ),
                   IconButton(
                     icon: const Icon(Icons.flip_camera_android, color: Colors.white),
                     onPressed: () {
-                      if (mounted) {
-                        setState(() {
-                          _isFrontCamera = !_isFrontCamera;
-                        });
-                        _engine!.switchCamera();
-                      }
+                      setState(() {
+                        _isFrontCamera = !_isFrontCamera;
+                      });
+                      _engine!.switchCamera();
                     },
                   ),
                 ],
@@ -817,13 +958,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   ElevatedButton(
                     onPressed: () {
-                      if (mounted) {
-                        setState(() {
-                          _showFriendOverlay = true;
-                        });
-                        widget.updateCallState(_inCall, _showFriendOverlay);
-                        _fetchFriendsForInvite();
-                      }
+                      setState(() {
+                        _showFriendOverlay = true;
+                      });
+                      widget.updateCallState(_inCall, _showFriendOverlay);
+                      _fetchFriendsForInvite();
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF4CAF50),
@@ -833,12 +972,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(width: 16),
                   ElevatedButton(
-                    onPressed: _endCall,
+                    onPressed: _isCreator ? _endCall : _leaveCall,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.redAccent,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text('End Call'),
+                    child: Text(_isCreator ? 'End Call' : 'Leave Call'),
                   ),
                 ],
               ),
