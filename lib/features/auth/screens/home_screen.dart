@@ -137,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _callInvitesChannel = _authService.supabase
         .channel('call_invites')
         .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
+          event: PostgresChangeEvent.all, // Listen for INSERT, UPDATE, DELETE
           schema: 'public',
           table: 'call_invites',
           filter: PostgresChangeFilter(
@@ -146,8 +146,8 @@ class _HomeScreenState extends State<HomeScreen> {
             value: currentUser.id,
           ),
           callback: (payload) {
-            print('New call invite received: $payload');
-            _fetchCallInvites();
+            print('Call invite changed: $payload');
+            _fetchCallInvites(); // Refresh the invites list on any change
           },
         )
         .subscribe();
@@ -227,7 +227,6 @@ class _HomeScreenState extends State<HomeScreen> {
       final currentUser = await _authService.getCurrentUser();
       if (currentUser == null) throw Exception('User not authenticated');
 
-      // Fetch the invite to get the correct room ID
       final invite = await _authService.supabase
           .from('call_invites')
           .select('room_id')
@@ -254,10 +253,10 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       widget.updateCallState(_inCall, _showFriendOverlay);
 
-      final channelId = validRoomId; // Use room_id as channelId
+      final channelId = validRoomId;
       print('Joining Agora channel with channelId: $channelId');
       await _engine!.joinChannel(
-        token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=',
+        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
         channelId: channelId,
         uid: 0,
         options: const ChannelMediaOptions(
@@ -267,6 +266,11 @@ class _HomeScreenState extends State<HomeScreen> {
           autoSubscribeAudio: true,
         ),
       );
+
+      // Refresh the invites list after acceptance
+      if (mounted) {
+        await _fetchCallInvites();
+      }
     } catch (e) {
       print('Error in _acceptInvite: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -291,7 +295,7 @@ class _HomeScreenState extends State<HomeScreen> {
           .eq('id', inviteId);
 
       if (mounted) {
-        await _fetchCallInvites();
+        await _fetchCallInvites(); // Refresh the invites list after decline
       }
     } catch (e) {
       if (mounted) {
@@ -564,7 +568,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final channelId = _currentRoom!['room_id'].toString(); // Use room_id as channelId
       print('Joining Agora channel with channelId: $channelId');
       await _engine!.joinChannel(
-        token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=',
+        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
         channelId: channelId,
         uid: 0,
         options: const ChannelMediaOptions(
@@ -665,6 +669,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         itemBuilder: (context, index) {
                           if (index < _callInvites.length) {
                             final invite = _callInvites[index];
+                            if (invite['status'] != 'pending') return const SizedBox.shrink(); // Skip non-pending invites
                             final room = invite['room_id'];
                             if (room == null) {
                               return Card(
@@ -785,8 +790,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                           widget.updateCallState(_inCall, _showFriendOverlay);
                                         }
                                         await _engine!.joinChannel(
-                                          token: '007eJxTYDD0Zi+POnhvDmfkFdfVcZwb2872mqoe5bdqWuqzlD9WJ1GBwdzIwsTYxNLcLCUt2STFwNLSLMnMwsjAPDnJ0NQ0zdxQ5bBERkMgI0Pi0SxGRgYIBPFVGMzSktKMTC0tdE1NzCx0TSyTk3STLMyTdU3SDJIsEo0tEk0sDRkYAFZSI50=', 
-                                          channelId: '6fbf2598-5468-49cb-b87c-4f0b8a38a491', 
+                                          token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
+                                          channelId: '0c610c2a-c710-44c4-83ae-469897755f90',
                                           uid: 0,
                                           options: const ChannelMediaOptions(
                                             clientRoleType: ClientRoleType.clientRoleBroadcaster,
@@ -795,6 +800,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             autoSubscribeAudio: true,
                                           ),
                                         );
+                                        await _fetchCallInvites(); // Refresh invites after joining
                                       } catch (e) {
                                         if (mounted) {
                                           ScaffoldMessenger.of(context).showSnackBar(
