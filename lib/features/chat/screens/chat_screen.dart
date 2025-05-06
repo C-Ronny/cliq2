@@ -57,7 +57,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isRecordingVideo = false;
   String? _recordedVideoPath;
   Timer? _recordingTimer;
-  int _cameraIndex = 0;
+  bool _isFrontCamera = true;
 
   @override
   void initState() {
@@ -394,8 +394,13 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) throw Exception('No camera available');
-      _cameraIndex = _cameraIndex % cameras.length;
-      _cameraController = CameraController(cameras[_cameraIndex], ResolutionPreset.medium);
+      _cameraController?.dispose();
+      _cameraController = CameraController(
+        _isFrontCamera ? cameras.firstWhere((camera) => camera.lensDirection == CameraLensDirection.front,
+            orElse: () => cameras.first) : cameras.firstWhere((camera) => camera.lensDirection == CameraLensDirection.back,
+            orElse: () => cameras.first),
+        ResolutionPreset.medium,
+      );
       await _cameraController!.initialize();
 
       final directory = await getTemporaryDirectory();
@@ -488,20 +493,24 @@ class _ChatScreenState extends State<ChatScreen> {
                       const SizedBox(width: 16),
                       ElevatedButton(
                         onPressed: _isRecordingVideo ? null : () async {
-                          final cameras = await availableCameras();
-                          if (cameras.length > 1) {
-                            setModalState(() {
-                              _cameraIndex = (_cameraIndex + 1) % cameras.length;
-                              _cameraController?.dispose();
-                              _cameraController = CameraController(cameras[_cameraIndex], ResolutionPreset.medium);
-                              _cameraController!.initialize().then((_) {
-                                setModalState(() {});
-                              }).catchError((e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Failed to switch camera: $e')),
-                                );
-                              });
+                          try {
+                            setState(() {
+                              _isFrontCamera = !_isFrontCamera;
                             });
+                            final cameras = await availableCameras();
+                            _cameraController?.dispose();
+                            _cameraController = CameraController(
+                              _isFrontCamera ? cameras.firstWhere((camera) => camera.lensDirection == CameraLensDirection.front,
+                                  orElse: () => cameras.first) : cameras.firstWhere((camera) => camera.lensDirection == CameraLensDirection.back,
+                                  orElse: () => cameras.first),
+                              ResolutionPreset.medium,
+                            );
+                            await _cameraController!.initialize();
+                            setModalState(() {});
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed to switch camera: $e')),
+                            );
                           }
                         },
                         style: ElevatedButton.styleFrom(
