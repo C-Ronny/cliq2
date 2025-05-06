@@ -49,46 +49,46 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<String> _showNameDialog(BuildContext context) async {
-  final TextEditingController controller = TextEditingController();
-  String roomName = '';
+    final TextEditingController controller = TextEditingController();
+    String roomName = '';
 
-  await showDialog(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Enter Room Name'),
-      content: TextField(
-        controller: controller,
-        decoration: const InputDecoration(hintText: 'Room Name'),
-        onChanged: (value) {
-          roomName = value.trim();
-        },
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enter Room Name'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: 'Room Name'),
+          onChanged: (value) {
+            roomName = value.trim();
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (roomName.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Room name cannot be empty')),
+                );
+                return;
+              }
+              Navigator.pop(context, roomName);
+            },
+            child: const Text('OK'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            Navigator.pop(context);
-          },
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () {
-            if (roomName.isEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Room name cannot be empty')),
-              );
-              return;
-            }
-            Navigator.pop(context, roomName);
-          },
-          child: const Text('OK'),
-        ),
-      ],
-    ),
-  );
+    );
 
-  // If the dialog is dismissed (e.g., by pressing Cancel), return a default name or handle it
-  return roomName.isNotEmpty ? roomName : 'Default Room';
-}
+    // If the dialog is dismissed (e.g., by pressing Cancel), return a default name or handle it
+    return roomName.isNotEmpty ? roomName : 'Default Room';
+  }
 
   Future<void> _initializeAgora() async {
     try {
@@ -110,13 +110,23 @@ class _HomeScreenState extends State<HomeScreen> {
         channelProfile: ChannelProfileType.channelProfileCommunication,
       ));
 
+      await _engine!.enableVideo();
+      await _engine!.enableLocalVideo(true); // Ensure local video is enabled by default
+      await _engine!.setVideoEncoderConfiguration(const VideoEncoderConfiguration(
+        dimensions: VideoDimensions(width: 640, height: 360),
+        frameRate: 15,
+        bitrate: 600,
+      ));
+      await _engine!.startPreview();
+      print('Local video preview started');
+
       _engine!.registerEventHandler(
         RtcEngineEventHandler(
           onJoinChannelSuccess: (connection, elapsed) async {
             print('Local user joined channel: ${connection.localUid}');
             final userId = (await _authService.getCurrentUser())?.id;
             if (userId != null && _currentRoom != null && connection.localUid != null) {
-              _uidToUserIdMap[connection.localUid!] = userId; // Map local UID
+              _uidToUserIdMap[connection.localUid!] = userId;
             }
           },
           onUserJoined: (connection, remoteUid, elapsed) {
@@ -124,13 +134,10 @@ class _HomeScreenState extends State<HomeScreen> {
             if (mounted) {
               setState(() {
                 _remoteUids.add(remoteUid);
-                // Assign remoteUid to the next available participant ID
-                if (_currentRoom != null && _currentRoom!['participant_ids'] is List) {
-                  final participantIds = List<String>.from(_currentRoom!['participant_ids']);
-                  final availableIds = participantIds.where((id) => !_uidToUserIdMap.values.contains(id)).toList();
-                  if (availableIds.isNotEmpty) {
-                    _uidToUserIdMap[remoteUid] = availableIds.first; // Assign first available ID
-                  }
+                final participantIds = _currentRoom?['participant_ids'] as List<String>? ?? [];
+                final availableIds = participantIds.where((id) => !_uidToUserIdMap.values.contains(id)).toList();
+                if (availableIds.isNotEmpty) {
+                  _uidToUserIdMap[remoteUid] = availableIds.first;
                 }
               });
             }
@@ -142,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _uidToUserIdMap.remove(remoteUid);
               });
             }
-            print('Remote user left: $remoteUid');
+            print('Remote user left: $remoteUid, reason: $reason');
           },
           onError: (err, msg) {
             print('Agora Error: $err, Message: $msg');
@@ -152,11 +159,32 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             }
           },
+          onFirstRemoteVideoFrame: (connection, remoteUid, width, height, elapsed) {
+            print('First remote video frame received from UID: $remoteUid, width: $width, height: $height');
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          onLocalVideoStateChanged: (source, state, error) {
+            print('Local video state changed: $state, error: $error');
+          },
+          onRemoteVideoStateChanged: (connection, remoteUid, state, reason, elapsed) {
+            print('Remote video state changed for UID: $remoteUid, state: $state, reason: $reason');
+          },
+          onUserEnableVideo: (connection, remoteUid, enabled) {
+            print('Remote user $remoteUid video enabled: $enabled');
+            if (mounted) {
+              setState(() {
+                if (enabled && !_remoteUids.contains(remoteUid)) {
+                  _remoteUids.add(remoteUid);
+                } else if (!enabled) {
+                  _remoteUids.remove(remoteUid);
+                }
+              });
+            }
+          },
         ),
       );
-
-      await _engine!.enableVideo();
-      await _engine!.startPreview();
     } catch (e) {
       print('Agora initialization error: $e');
       if (mounted) {
@@ -298,7 +326,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const fixedChannelId = '0c610c2a-c710-44c4-83ae-469897755f90'; // Fixed channel ID for Agora
       print('Joining Agora channel with channelId: $fixedChannelId');
       await _engine!.joinChannel(
-        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=', 
+        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
         channelId: fixedChannelId,
         uid: 0,
         options: const ChannelMediaOptions(
@@ -306,6 +334,8 @@ class _HomeScreenState extends State<HomeScreen> {
           channelProfile: ChannelProfileType.channelProfileCommunication,
           autoSubscribeVideo: true,
           autoSubscribeAudio: true,
+          publishCameraTrack: true,
+          publishMicrophoneTrack: true,
         ),
       );
 
@@ -397,6 +427,84 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         );
+      }
+    }
+  }
+
+  Future<void> _startCall() async {
+    try {
+      final roomName = await _showNameDialog(context);
+      if (roomName.isEmpty) return;
+
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser == null) throw Exception('User not authenticated');
+
+      print('Creating video room with name: $roomName');
+      final roomData = await _authService.createVideoRoom(name: roomName);
+      if (roomData == null) throw Exception('Failed to create room');
+
+      print('Created room successfully: $roomData');
+
+      setState(() {
+        _inCall = true;
+        _currentRoom = roomData;
+        _isCreator = true;
+      });
+
+      widget.updateCallState(_inCall, _showFriendOverlay);
+
+      print('Joining room with userId: ${currentUser.id}');
+      await _authService.joinVideoRoom(roomData['room_id'], currentUser.id);
+
+      const fixedChannelId = '0c610c2a-c710-44c4-83ae-469897755f90';
+      print('Joining Agora channel with channelId: $fixedChannelId');
+      await _engine!.joinChannel(
+        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
+        channelId: fixedChannelId,
+        uid: 0,
+        options: const ChannelMediaOptions(
+          clientRoleType: ClientRoleType.clientRoleBroadcaster,
+          channelProfile: ChannelProfileType.channelProfileCommunication,
+          autoSubscribeVideo: true,
+          autoSubscribeAudio: true,
+          publishCameraTrack: true,
+          publishMicrophoneTrack: true,
+        ),
+      );
+
+      print('Successfully joined Agora channel');
+    } catch (e) {
+      print('Error in _startCall: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+          _inCall = false;
+          _currentRoom = null;
+          _isCreator = false;
+        });
+        widget.updateCallState(_inCall, _showFriendOverlay);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start call: ${_errorMessage!}'),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: _startCall,
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
@@ -536,82 +644,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
-  }
-
-  Future<void> _startCall() async {
-    try {
-      final roomName = await _showNameDialog(context);
-      if (roomName.isEmpty) return; // Simplified condition since roomName is guaranteed non-null
-
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
-
-      final currentUser = await _authService.getCurrentUser();
-      if (currentUser == null) throw Exception('User not authenticated');
-
-      print('Creating video room with name: $roomName');
-      final roomData = await _authService.createVideoRoom(name: roomName);
-      if (roomData == null) throw Exception('Failed to create room');
-
-      print('Created room successfully: $roomData');
-
-      setState(() {
-        _inCall = true;
-        _currentRoom = roomData;
-        _isCreator = true;
-      });
-
-      widget.updateCallState(_inCall, _showFriendOverlay);
-
-      print('Joining room with userId: ${currentUser.id}');
-      await _authService.joinVideoRoom(roomData['room_id'], currentUser.id);
-
-      const fixedChannelId = '0c610c2a-c710-44c4-83ae-469897755f90'; // Fixed channel ID for Agora
-      print('Joining Agora channel with channelId: $fixedChannelId');
-      await _engine!.joinChannel(
-        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
-        channelId: fixedChannelId,
-        uid: 0,
-        options: const ChannelMediaOptions(
-          clientRoleType: ClientRoleType.clientRoleBroadcaster,
-          channelProfile: ChannelProfileType.channelProfileCommunication,
-          autoSubscribeVideo: true,
-          autoSubscribeAudio: true,
-        ),
-      );
-
-      print('Successfully joined Agora channel');
-    } catch (e) {
-      print('Error in _startCall: $e');
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.toString().replaceFirst('Exception: ', '');
-          _inCall = false;
-          _currentRoom = null;
-          _isCreator = false;
-        });
-        widget.updateCallState(_inCall, _showFriendOverlay);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to start call: ${_errorMessage!}'),
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: Colors.white,
-              onPressed: _startCall,
-            ),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
   }
 
   Future<void> _leaveCall() async {
@@ -810,7 +842,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         }
                                         const fixedChannelId = '0c610c2a-c710-44c4-83ae-469897755f90'; 
                                         await _engine!.joinChannel(
-                                          token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=', 
+                                          token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
                                           channelId: fixedChannelId,
                                           uid: 0,
                                           options: const ChannelMediaOptions(
@@ -818,6 +850,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                             channelProfile: ChannelProfileType.channelProfileCommunication,
                                             autoSubscribeVideo: true,
                                             autoSubscribeAudio: true,
+                                            publishCameraTrack: true,
+                                            publishMicrophoneTrack: true,
                                           ),
                                         );
                                         await _fetchCallInvites();
@@ -870,14 +904,20 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: Stack(
             children: [
+              // Local video
               if (_engine != null && _errorMessage == null)
                 Container(
                   color: Colors.black,
-                  child: AgoraVideoView(
-                    controller: VideoViewController(
-                      rtcEngine: _engine!,
-                      canvas: const VideoCanvas(uid: 0),
-                      useAndroidSurfaceView: true,
+                  child: Center(
+                    child: AgoraVideoView(
+                      controller: VideoViewController(
+                        rtcEngine: _engine!,
+                        canvas: const VideoCanvas(
+                          uid: 0,
+                          renderMode: RenderModeType.renderModeFit,
+                        ),
+                        useAndroidSurfaceView: true,
+                      ),
                     ),
                   ),
                 )
@@ -888,12 +928,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(color: Colors.white),
                   ),
                 ),
+              // Remote videos
               if (_remoteUids.isNotEmpty && _errorMessage == null)
                 GridView.builder(
+                  padding: const EdgeInsets.all(8.0),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     crossAxisSpacing: 8,
                     mainAxisSpacing: 8,
+                    childAspectRatio: 1.0,
                   ),
                   itemCount: _remoteUids.length,
                   itemBuilder: (context, index) {
@@ -902,12 +945,36 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (userId != null && currentRoomParticipants.contains(userId)) {
                       return Container(
                         color: Colors.black,
-                        child: AgoraVideoView(
-                          controller: VideoViewController(
-                            rtcEngine: _engine!,
-                            canvas: VideoCanvas(uid: remoteUid),
-                            useAndroidSurfaceView: true,
-                          ),
+                        child: Stack(
+                          children: [
+                            AgoraVideoView(
+                              controller: VideoViewController(
+                                rtcEngine: _engine!,
+                                canvas: VideoCanvas(
+                                  uid: remoteUid,
+                                  renderMode: RenderModeType.renderModeFit,
+                                ),
+                                useAndroidSurfaceView: true,
+                              ),
+                            ),
+                            Positioned(
+                              top: 8,
+                              left: 8,
+                              child: Text(
+                                'UID: $remoteUid',
+                                style: const TextStyle(color: Colors.white, fontSize: 12),
+                              ),
+                            ),
+                            // Display "No Video" label for remote users
+                            const Positioned(
+                                top: 24,
+                                left: 8,
+                                child: Text(
+                                  'Remote User',
+                                  style: TextStyle(color: Colors.white, fontSize: 12),
+                                ),
+                              ),
+                          ],
                         ),
                       );
                     }
@@ -952,9 +1019,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         _isVideoEnabled = !_isVideoEnabled;
                       });
                       if (_isVideoEnabled) {
+                        _engine!.enableLocalVideo(true);
                         _engine!.enableVideo();
                         _engine!.startPreview();
                       } else {
+                        _engine!.enableLocalVideo(false);
                         _engine!.disableVideo();
                         _engine!.stopPreview();
                       }

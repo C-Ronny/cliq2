@@ -5,12 +5,13 @@ import 'features/auth/screens/onboarding_screen.dart';
 import 'features/auth/screens/profile_setup_screen.dart';
 import 'features/auth/screens/signup_screen.dart';
 import 'features/auth/screens/splash_screen.dart';
-import 'features/auth/screens/friend_profile_screen.dart';
 import 'features/auth/screens/home_screen.dart';
 import 'features/auth/screens/friends_screen.dart';
 import 'features/profile/screens/profile_screen.dart';
 import 'models/user_model.dart';
 import 'widgets/bottom_nav_bar.dart';
+import 'features/chat/screens/chat_list_screen.dart';
+import 'features/chat/screens/chat_screen.dart';
 
 final GoRouter router = GoRouter(
   initialLocation: '/splash',
@@ -119,6 +120,40 @@ final GoRouter router = GoRouter(
         );
       },
     ),
+    GoRoute(
+      path: '/chat/:friendId',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>;
+        final friendName = extra['friendName'] as String;
+        final friendId = state.pathParameters['friendId'] as String;
+        return ChatScreen(
+          friendName: friendName,
+          friendId: friendId,
+        );
+      },
+      pageBuilder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>;
+        final friendName = extra['friendName'] as String;
+        final friendId = state.pathParameters['friendId'] as String;
+        return CustomTransitionPage(
+          key: state.pageKey,
+          child: ChatScreen(
+            friendName: friendName,
+            friendId: friendId,
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            const begin = Offset(1.0, 0.0);
+            const end = Offset.zero;
+            const curve = Curves.easeInOut;
+            var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+            return SlideTransition(
+              position: animation.drive(tween),
+              child: child,
+            );
+          },
+        );
+      },
+    ),
     ShellRoute(
       builder: (context, state, child) {
         return MainScreen(
@@ -136,10 +171,8 @@ final GoRouter router = GoRouter(
           builder: (context, state) {
             return HomeScreen(
               updateCallState: (inCall, overlayActive) {
-                // Find the parent MainScreen widget
                 final MainScreen? mainScreen = context.findAncestorWidgetOfExactType<MainScreen>();
                 if (mainScreen != null) {
-                  // Call the updateCallState function passed to MainScreen
                   mainScreen.updateCallState(inCall, overlayActive);
                 }
               },
@@ -150,10 +183,8 @@ final GoRouter router = GoRouter(
               key: state.pageKey,
               child: HomeScreen(
                 updateCallState: (inCall, overlayActive) {
-                  // Find the parent MainScreen widget
                   final MainScreen? mainScreen = context.findAncestorWidgetOfExactType<MainScreen>();
                   if (mainScreen != null) {
-                    // Call the updateCallState function passed to MainScreen
                     mainScreen.updateCallState(inCall, overlayActive);
                   }
                 },
@@ -190,6 +221,24 @@ final GoRouter router = GoRouter(
           ),
         ),
         GoRoute(
+          path: '/main/chats',
+          builder: (context, state) => const ChatListScreen(),
+          pageBuilder: (context, state) => CustomTransitionPage(
+            key: state.pageKey,
+            child: const ChatListScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              const begin = Offset(1.0, 0.0);
+              const end = Offset.zero;
+              const curve = Curves.easeInOut;
+              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+              return SlideTransition(
+                position: animation.drive(tween),
+                child: child,
+              );
+            },
+          ),
+        ),
+        GoRoute(
           path: '/main/profile',
           builder: (context, state) => const ProfileScreen(),
           pageBuilder: (context, state) => CustomTransitionPage(
@@ -206,30 +255,6 @@ final GoRouter router = GoRouter(
               );
             },
           ),
-        ),
-        GoRoute(
-          path: '/main/friend-profile',
-          builder: (context, state) {
-            final friend = state.extra as UserModel;
-            return FriendProfileScreen(friend: friend);
-          },
-          pageBuilder: (context, state) {
-            final friend = state.extra as UserModel;
-            return CustomTransitionPage(
-              key: state.pageKey,
-              child: FriendProfileScreen(friend: friend),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                const begin = Offset(1.0, 0.0);
-                const end = Offset.zero;
-                const curve = Curves.easeInOut;
-                var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-                return SlideTransition(
-                  position: animation.drive(tween),
-                  child: child,
-                );
-              },
-            );
-          },
         ),
       ],
     ),

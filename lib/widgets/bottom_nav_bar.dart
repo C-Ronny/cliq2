@@ -19,7 +19,7 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   late int _selectedIndex;
-  static const List<String> _routes = ['/main/home', '/main/friends', '/main/profile'];
+  static const List<String> _routes = ['/main/home', '/main/friends', '/main/chats', '/main/profile'];
   bool _isInVideoCallState = false;
   bool _isOverlayActive = false;
 
@@ -61,6 +61,7 @@ class _MainScreenState extends State<MainScreen> {
               items: const <BottomNavigationBarItem>[
                 BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
                 BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Friends'),
+                BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chats',),
                 BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
               ],
               currentIndex: _selectedIndex,
