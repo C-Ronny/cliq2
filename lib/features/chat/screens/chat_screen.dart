@@ -10,11 +10,13 @@ import '../../../models/message_model.dart';
 class ChatScreen extends StatefulWidget {
   final String friendName;
   final String friendId;
+  final String conversationId;
 
   const ChatScreen({
     super.key,
     required this.friendName,
     required this.friendId,
+    required this.conversationId,
   });
 
   @override
@@ -29,11 +31,14 @@ class _ChatScreenState extends State<ChatScreen> {
   List<MessageModel> _messages = [];
   RealtimeChannel? _messagesChannel;
   bool _canSend = false;
-  String? _conversationId;
   String? _currentUserId;
   bool _isLoading = true;
   bool _isUploading = false;
+  bool _isLoadingMore = false;
   String? _errorMessage;
+  final int _messagesPerPage = 20;
+  bool _hasMoreMessages = true;
+  String? _friendProfilePicture;
 
   @override
   void initState() {
@@ -43,6 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _canSend = _messageController.text.trim().isNotEmpty;
       });
     });
+    _scrollController.addListener(_scrollListener);
     _initialize();
   }
 
@@ -54,7 +60,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       await _fetchCurrentUser();
-      await _fetchOrCreateConversation();
+      await _fetchFriendProfilePicture();
+      await _fetchMessages();
       _setupRealtimeListener();
     } catch (e) {
       setState(() {
@@ -81,54 +88,88 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _fetchOrCreateConversation() async {
+  Future<void> _fetchFriendProfilePicture() async {
     try {
-      final currentUser = await _authService.getCurrentUser();
-      if (currentUser == null) {
-        throw Exception('User not authenticated');
+      final friendProfile = await SupabaseConfig.client
+          .from('profiles')
+          .select('profile_picture')
+          .eq('id', widget.friendId)
+          .single();
+
+      if (friendProfile['profile_picture'] != null) {
+        final signedUrl = await SupabaseConfig.client.storage
+            .from('avatars')
+            .createSignedUrl('${widget.friendId}.jpg', 60);
+        setState(() {
+          _friendProfilePicture = signedUrl;
+        });
       }
-
-      final response = await SupabaseConfig.client
-          .from('conversations')
-          .select('id')
-          .contains('participant_ids', [currentUser.id, widget.friendId])
-          .maybeSingle();
-
-      if (response != null && response['id'] != null) {
-        _conversationId = response['id'];
-      } else {
-        final newConversation = await _authService.createConversation([currentUser.id, widget.friendId]);
-        _conversationId = newConversation['id'];
-      }
-
-      await _fetchMessages();
     } catch (e) {
-      throw Exception('Failed to load or create conversation: $e');
+      print('Failed to fetch friend profile picture: $e');
     }
   }
 
-  Future<void> _fetchMessages() async {
-    if (_conversationId == null) return;
+  Future<void> _fetchMessages({bool loadMore = false}) async {
+    if (widget.conversationId.isEmpty || (!_hasMoreMessages && loadMore)) return;
+
+    if (loadMore) {
+      setState(() {
+        _isLoadingMore = true;
+      });
+    }
+
     try {
       final response = await SupabaseConfig.client
           .from('messages')
           .select('*')
-          .eq('conversation_id', _conversationId!)
-          .order('created_at', ascending: true);
+          .eq('conversation_id', widget.conversationId)
+          .order('created_at', ascending: false) // Newest first for pagination
+          .range(
+            loadMore ? _messages.length : 0,
+            loadMore ? _messages.length + _messagesPerPage - 1 : _messagesPerPage - 1,
+          );
+
+      final newMessages = (response as List)
+          .map((json) => MessageModel.fromJson(json))
+          .toList()
+          .reversed
+          .toList(); // Reverse to display oldest first in UI
+
       setState(() {
-        _messages = (response as List).map((json) => MessageModel.fromJson(json)).toList();
+        if (loadMore) {
+          _messages.insertAll(0, newMessages);
+          _hasMoreMessages = newMessages.length == _messagesPerPage;
+        } else {
+          _messages = newMessages;
+          _hasMoreMessages = newMessages.length == _messagesPerPage;
+        }
       });
-      _scrollToBottom();
+
+      if (!loadMore) {
+        _scrollToBottom();
+      }
     } catch (e) {
       throw Exception('Failed to load messages: $e');
+    } finally {
+      if (loadMore) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  void _scrollListener() {
+    if (_scrollController.position.pixels <= _scrollController.position.minScrollExtent + 50 &&
+        !_isLoadingMore &&
+        _hasMoreMessages) {
+      _fetchMessages(loadMore: true);
     }
   }
 
   void _setupRealtimeListener() {
-    if (_conversationId == null) return;
-
     _messagesChannel?.unsubscribe();
-    _messagesChannel = SupabaseConfig.client.channel('messages_$_conversationId')
+    _messagesChannel = SupabaseConfig.client.channel('messages_${widget.conversationId}')
       ..onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -136,7 +177,7 @@ class _ChatScreenState extends State<ChatScreen> {
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'conversation_id',
-            value: _conversationId!,
+            value: widget.conversationId,
           ),
           callback: (payload) {
             final newMessage = MessageModel.fromJson(payload.newRecord);
@@ -161,7 +202,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
-    if (!_canSend || _conversationId == null) return;
+    if (!_canSend || widget.conversationId.isEmpty) return;
     final currentUser = await _authService.getCurrentUser();
     if (currentUser == null) return;
 
@@ -170,7 +211,7 @@ class _ChatScreenState extends State<ChatScreen> {
       content: _messageController.text.trim(),
       senderId: currentUser.id,
       createdAt: DateTime.now(),
-      conversationId: _conversationId!,
+      conversationId: widget.conversationId,
       mediaType: 'text',
       mediaUrl: null,
     );
@@ -189,7 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendImageMessage() async {
-    if (_conversationId == null) return;
+    if (widget.conversationId.isEmpty) return;
     final currentUser = await _authService.getCurrentUser();
     if (currentUser == null) {
       print('DEBUG: User not authenticated - _authService.getCurrentUser() returned null');
@@ -214,7 +255,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final conversation = await SupabaseConfig.client
           .from('conversations')
           .select('id')
-          .eq('id', _conversationId!)
+          .eq('id', widget.conversationId)
           .single();
       if (conversation == null) throw Exception('Conversation not found');
 
@@ -242,7 +283,7 @@ class _ChatScreenState extends State<ChatScreen> {
         content: '', // No text content for image messages
         senderId: currentUser.id,
         createdAt: DateTime.now(),
-        conversationId: _conversationId!,
+        conversationId: widget.conversationId,
         mediaType: 'image',
         mediaUrl: fileName, // Store just the file name
       );
@@ -331,11 +372,30 @@ class _ChatScreenState extends State<ChatScreen> {
             context.go('/main/chats');
           },
         ),
-        title: Text(
-          widget.friendName,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundImage: _friendProfilePicture != null
+                  ? NetworkImage(_friendProfilePicture!)
+                  : null,
+              child: _friendProfilePicture == null
+                  ? Text(
+                      widget.friendName.isNotEmpty
+                          ? widget.friendName.substring(0, 1).toUpperCase()
+                          : 'U',
+                      style: const TextStyle(color: Colors.white),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              widget.friendName,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ],
         ),
-        centerTitle: true,
+        centerTitle: false,
         backgroundColor: const Color(0xFF4CAF50),
         elevation: 0,
       ),
@@ -411,6 +471,17 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     List<Widget> messageWidgets = [];
+    if (_isLoadingMore) {
+      messageWidgets.add(
+        const Padding(
+          padding: EdgeInsets.all(8.0),
+          child: Center(
+            child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
+          ),
+        ),
+      );
+    }
+
     messagesByDate.forEach((date, messages) {
       messageWidgets.add(
         Padding(
@@ -541,6 +612,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _messageController.dispose();
+    _scrollController.removeListener(_scrollListener);
     _scrollController.dispose();
     _messagesChannel?.unsubscribe();
     super.dispose();

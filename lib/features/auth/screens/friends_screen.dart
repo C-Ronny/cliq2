@@ -310,16 +310,30 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
         return;
       }
 
-      // Create a conversation with the current user and friend
-      final conversation = await _authService.createConversation([currentUser.id, friendId]);
+      // Check if a conversation already exists
+      final response = await _authService.supabase
+          .from('conversations')
+          .select('id')
+          .contains('participant_ids', [currentUser.id, friendId])
+          .maybeSingle();
+
+      String conversationId;
+      if (response != null && response['id'] != null) {
+        conversationId = response['id'];
+      } else {
+        final newConversation = await _authService.createConversation([currentUser.id, friendId]);
+        conversationId = newConversation['id'];
+      }
+
       final friend = _friends.firstWhere((f) => f.id == friendId);
 
       // Navigate to the chat screen
       context.go(
-        '/chat/${conversation['id']}',
+        '/chat/$conversationId',
         extra: {
           'friendName': '${friend.firstName ?? ''} ${friend.lastName ?? ''}',
           'friendId': friendId,
+          'conversationId': conversationId,
         },
       );
     } catch (e) {

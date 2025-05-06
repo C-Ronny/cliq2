@@ -126,20 +126,24 @@ final GoRouter router = GoRouter(
         final extra = state.extra as Map<String, dynamic>;
         final friendName = extra['friendName'] as String;
         final friendId = state.pathParameters['friendId'] as String;
+        final conversationId = extra['conversationId'] as String; // Added conversationId
         return ChatScreen(
           friendName: friendName,
           friendId: friendId,
+          conversationId: conversationId, // Added conversationId
         );
       },
       pageBuilder: (context, state) {
         final extra = state.extra as Map<String, dynamic>;
         final friendName = extra['friendName'] as String;
         final friendId = state.pathParameters['friendId'] as String;
+        final conversationId = extra['conversationId'] as String; // Added conversationId
         return CustomTransitionPage(
           key: state.pageKey,
           child: ChatScreen(
             friendName: friendName,
             friendId: friendId,
+            conversationId: conversationId, // Added conversationId
           ),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             const begin = Offset(1.0, 0.0);

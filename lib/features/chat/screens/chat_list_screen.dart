@@ -1,41 +1,150 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../auth/auth_service.dart';
+import '../../../models/message_model.dart';
+import '../../../config/supabase.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
 
   @override
-  State<ChatListScreen> createState() => _ChatListScreenState();
+  ChatListScreenState createState() => ChatListScreenState();
 }
 
-class _ChatListScreenState extends State<ChatListScreen> {
+class ChatListScreenState extends State<ChatListScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final AuthService _authService = AuthService();
   List<Map<String, dynamic>> _conversations = [];
   List<Map<String, dynamic>> _filteredConversations = [];
+  RealtimeChannel? _messagesChannel;
+  String? _currentUserId;
 
   @override
   void initState() {
     super.initState();
-    // Mock data for now; will fetch from Supabase in Step 3
-    _conversations = [
-      {
-        'friend_id': 'friend_1', // Add friend_id for navigation
-        'friend_name': 'Ronelle Cudjoe',
-        'last_message': 'Hey, how are you?',
-        'timestamp': DateTime.now().subtract(const Duration(hours: 1)),
-        'unread': true,
-      },
-      {
-        'friend_id': 'friend_2',
-        'friend_name': 'Jane Doe',
-        'last_message': 'See you tomorrow!',
-        'timestamp': DateTime.now().subtract(const Duration(days: 1)),
-        'unread': false,
-      },
-    ];
-    _filteredConversations = _conversations;
-
+    _initialize();
     _searchController.addListener(_filterConversations);
+  }
+
+  Future<void> _initialize() async {
+    // Fetch the current user
+    final currentUser = await _authService.getCurrentUser();
+    if (currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not authenticated')),
+      );
+      context.go('/login');
+      return;
+    }
+    setState(() {
+      _currentUserId = currentUser.id;
+    });
+
+    await _fetchConversations();
+    _setupRealtimeListener();
+  }
+
+  Future<void> _fetchConversations() async {
+    if (_currentUserId == null) return;
+
+    try {
+      // Fetch conversations where the current user is a participant
+      final response = await SupabaseConfig.client
+          .from('conversations')
+          .select('id, participant_ids')
+          .contains('participant_ids', [_currentUserId]);
+
+      final conversations = (response as List<dynamic>);
+
+      List<Map<String, dynamic>> convList = [];
+      for (var conv in conversations) {
+        final participantIds = List<String>.from(conv['participant_ids']);
+        final friendId = participantIds.firstWhere((id) => id != _currentUserId);
+
+        // Fetch the friend's profile
+        final friendProfile = await SupabaseConfig.client
+            .from('profiles')
+            .select('id, first_name, last_name, profile_picture')
+            .eq('id', friendId)
+            .single();
+
+        // Fetch the last message in this conversation
+        final lastMessageResponse = await SupabaseConfig.client
+            .from('messages')
+            .select('*')
+            .eq('conversation_id', conv['id'])
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
+        // Fetch signed URL for friend's profile picture if it exists
+        String? profilePictureUrl;
+        if (friendProfile['profile_picture'] != null) {
+          try {
+            profilePictureUrl = await SupabaseConfig.client.storage
+                .from('avatars')
+                .createSignedUrl('$friendId.jpg', 60);
+          } catch (e) {
+            print('Failed to fetch signed URL for $friendId: $e');
+          }
+        }
+
+        // Only add the conversation if it has at least one message
+        if (lastMessageResponse != null) {
+          final lastMessage = MessageModel.fromJson(lastMessageResponse);
+          convList.add({
+            'conversation_id': conv['id'],
+            'friend_id': friendId,
+            'friend_name': '${friendProfile['first_name'] ?? ''} ${friendProfile['last_name'] ?? ''}'.trim(),
+            'friend_profile_picture': profilePictureUrl,
+            'last_message': lastMessage.content.isNotEmpty ? lastMessage.content : (lastMessage.mediaType == 'image' ? 'Image' : ''),
+            'timestamp': lastMessage.createdAt,
+            'unread': false, // We'll implement unread logic later if needed
+          });
+        }
+      }
+
+      // Sort conversations by the timestamp of the last message (most recent first)
+      convList.sort((a, b) => b['timestamp'].compareTo(a['timestamp']));
+
+      setState(() {
+        _conversations = convList;
+        _filteredConversations = _conversations;
+      });
+    } catch (e) {
+      print('Error fetching conversations: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load conversations: $e')),
+      );
+    }
+  }
+
+  void _setupRealtimeListener() {
+    if (_currentUserId == null) return;
+
+    _messagesChannel?.unsubscribe();
+    _messagesChannel = SupabaseConfig.client.channel('all_messages')
+      ..onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) async {
+            final newMessage = MessageModel.fromJson(payload.newRecord);
+            // Check if the message belongs to a conversation involving the current user
+            final convResponse = await SupabaseConfig.client
+                .from('conversations')
+                .select('id, participant_ids')
+                .eq('id', newMessage.conversationId)
+                .contains('participant_ids', [_currentUserId])
+                .maybeSingle();
+
+            if (convResponse != null) {
+              // Refresh the conversations list
+              await _fetchConversations();
+            }
+          })
+      ..subscribe();
   }
 
   void _filterConversations() {
@@ -51,6 +160,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _messagesChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -101,13 +211,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       return ListTile(
                         leading: CircleAvatar(
                           backgroundColor: Colors.grey[700],
-                          child: Text(
-                            conversation['friend_name']
-                                    ?.substring(0, 1)
-                                    .toUpperCase() ??
-                                'U',
-                            style: const TextStyle(color: Colors.white),
-                          ),
+                          backgroundImage: conversation['friend_profile_picture'] != null
+                              ? NetworkImage(conversation['friend_profile_picture'])
+                              : null,
+                          child: conversation['friend_profile_picture'] == null
+                              ? Text(
+                                  conversation['friend_name']?.substring(0, 1).toUpperCase() ?? 'U',
+                                  style: const TextStyle(color: Colors.white),
+                                )
+                              : null,
                         ),
                         title: Text(
                           conversation['friend_name'] ?? 'Unknown',
@@ -149,10 +261,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         ),
                         onTap: () {
                           context.go(
-                            '/chat/${conversation['friend_id']}',
+                            '/chat/${conversation['friend_id']}', // Use friend_id as the path parameter
                             extra: {
                               'friendName': conversation['friend_name'],
                               'friendId': conversation['friend_id'],
+                              'conversationId': conversation['conversation_id'], // Pass conversation_id in extra
                             },
                           );
                         },
