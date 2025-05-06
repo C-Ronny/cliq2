@@ -684,6 +684,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           }
                           final playerController = PlayerController();
                           return Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
                                 icon: Icon(
@@ -702,6 +703,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                         shouldExtractWaveform: true,
                                       );
                                       await playerController.startPlayer();
+                                      // Add listener to handle completion if needed
+                                      playerController.onCompletion.listen((event) {
+                                        playerController.pausePlayer();
+                                      });
                                     }
                                   } catch (e) {
                                     ScaffoldMessenger.of(context).showSnackBar(
@@ -710,15 +715,24 @@ class _ChatScreenState extends State<ChatScreen> {
                                   }
                                 },
                               ),
-                              Expanded(
-                                child: AudioFileWaveforms(
-                                  size: const Size(200, 50),
-                                  playerController: playerController,
-                                  playerWaveStyle: const PlayerWaveStyle(
-                                    fixedWaveColor: Colors.white,
-                                    liveWaveColor: Colors.white70,
-                                    scaleFactor: 100,
-                                    waveThickness: 2,
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.3),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: SizedBox(
+                                  width: 150, // Fixed width for waveform
+                                  height: 40,
+                                  child: AudioFileWaveforms(
+                                    size: const Size(150, 40),
+                                    playerController: playerController,
+                                    playerWaveStyle: const PlayerWaveStyle(
+                                      fixedWaveColor: Colors.white54,
+                                      liveWaveColor: Colors.white,
+                                      scaleFactor: 150, // Increase scale for more pronounced peaks
+                                      waveThickness: 2.5, // Thicker waveform lines
+                                      spacing: 3, // Adjust spacing for better readability
+                                    ),
                                   ),
                                 ),
                               ),
