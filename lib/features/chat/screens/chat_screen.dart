@@ -362,6 +362,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _onRefresh() async {
+    await _fetchMessages(loadMore: false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -402,7 +406,11 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: _buildMessagesList(),
+            child: RefreshIndicator(
+              onRefresh: _onRefresh,
+              color: const Color(0xFF4CAF50),
+              child: _buildMessagesList(),
+            ),
           ),
           _buildMessageInput(),
         ],
@@ -420,38 +428,54 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (_errorMessage != null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              _errorMessage!,
-              style: TextStyle(color: Colors.red[400], fontSize: 16),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _initialize,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4CAF50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Container(
+            height: MediaQuery.of(context).size.height - 200,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _errorMessage!,
+                    style: TextStyle(color: Colors.red[400], fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _initialize,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4CAF50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Retry',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
               ),
-              child: const Text(
-                'Retry',
-                style: TextStyle(color: Colors.white),
-              ),
             ),
-          ],
+          ),
         ),
       );
     }
 
     if (_messages.isEmpty && !_isUploading) {
       return Center(
-        child: Text(
-          'No messages yet. Start chatting with ${widget.friendName}!',
-          style: TextStyle(color: Colors.grey[400], fontSize: 16),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Container(
+            height: MediaQuery.of(context).size.height - 200,
+            child: Center(
+              child: Text(
+                'No messages yet. Start chatting with ${widget.friendName}!',
+                style: TextStyle(color: Colors.grey[400], fontSize: 16),
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -515,7 +539,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       FutureBuilder<String>(
                         future: SupabaseConfig.client.storage
                             .from('chat-media')
-                            .createSignedUrl(message.mediaUrl!, 60), // URL valid for 60 seconds
+                            .createSignedUrl(message.mediaUrl!, 60),
                         builder: (context, snapshot) {
                           if (snapshot.connectionState == ConnectionState.waiting) {
                             return const CircularProgressIndicator(color: Color(0xFF4CAF50));
@@ -559,6 +583,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return ListView(
       controller: _scrollController,
+      physics: const AlwaysScrollableScrollPhysics(),
       children: messageWidgets,
     );
   }
