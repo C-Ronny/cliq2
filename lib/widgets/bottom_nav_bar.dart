@@ -92,21 +92,6 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
       bottomNavigationBar: (_selectedIndex == 0 && (_isInVideoCallState || _isOverlayActive))
           ? null
           : _buildCustomNavBar(),
-      floatingActionButton: _selectedIndex == 2 ? _buildFloatingActionButton() : null,
-    );
-  }
-
-  Widget _buildFloatingActionButton() {
-    return FloatingActionButton(
-      onPressed: () {
-        // Navigate to new chat or show friend selection dialog
-        // This would be implemented based on your app's flow
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Start a new conversation')),
-        );
-      },
-      backgroundColor: const Color(0xFF4CAF50),
-      child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
     );
   }
 
