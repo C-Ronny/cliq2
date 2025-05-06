@@ -17,16 +17,44 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateMixin {
   late int _selectedIndex;
   static const List<String> _routes = ['/main/home', '/main/friends', '/main/chats', '/main/profile'];
   bool _isInVideoCallState = false;
   bool _isOverlayActive = false;
+  late AnimationController _animationController;
+  
+  // Define the tab items with their icons and labels
+  final List<Map<String, dynamic>> _tabItems = [
+    {'icon': Icons.home_rounded, 'label': 'Home'},
+    {'icon': Icons.people_alt_rounded, 'label': 'Friends'},
+    {'icon': Icons.chat_bubble_rounded, 'label': 'Chats'},
+    {'icon': Icons.person_rounded, 'label': 'Profile'},
+  ];
 
   @override
   void initState() {
     super.initState();
     _updateIndexBasedOnRoute();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _animationController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(MainScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state.fullPath != widget.state.fullPath) {
+      _updateIndexBasedOnRoute();
+    }
   }
 
   void _updateIndexBasedOnRoute() {
@@ -38,9 +66,15 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _onItemTapped(int index) {
+    if (_selectedIndex == index) return;
+    
     setState(() {
       _selectedIndex = index;
     });
+    
+    _animationController.reset();
+    _animationController.forward();
+    
     context.go(_routes[index]);
   }
 
@@ -57,17 +91,92 @@ class _MainScreenState extends State<MainScreen> {
       body: widget.child,
       bottomNavigationBar: (_selectedIndex == 0 && (_isInVideoCallState || _isOverlayActive))
           ? null
-          : BottomNavigationBar(
-              items: const <BottomNavigationBarItem>[
-                BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-                BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Friends'),
-                BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chats',),
-                BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-              ],
-              currentIndex: _selectedIndex,
-              selectedItemColor: const Color(0xFF4CAF50),
-              onTap: _onItemTapped,
+          : _buildCustomNavBar(),
+      floatingActionButton: _selectedIndex == 2 ? _buildFloatingActionButton() : null,
+    );
+  }
+
+  Widget _buildFloatingActionButton() {
+    return FloatingActionButton(
+      onPressed: () {
+        // Navigate to new chat or show friend selection dialog
+        // This would be implemented based on your app's flow
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Start a new conversation')),
+        );
+      },
+      backgroundColor: const Color(0xFF4CAF50),
+      child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
+    );
+  }
+
+  Widget _buildCustomNavBar() {
+    return Container(
+      height: 70,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: List.generate(_tabItems.length, (index) {
+            final isSelected = _selectedIndex == index;
+            return _buildNavItem(
+              icon: _tabItems[index]['icon'],
+              label: _tabItems[index]['label'],
+              isSelected: isSelected,
+              onTap: () => _onItemTapped(index),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required IconData icon,
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF4CAF50).withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? const Color(0xFF4CAF50) : Colors.grey,
+              size: 24,
             ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? const Color(0xFF4CAF50) : Colors.grey,
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

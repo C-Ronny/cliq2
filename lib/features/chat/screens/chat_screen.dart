@@ -29,7 +29,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _messageController = TextEditingController();
   final AuthService _authService = AuthService();
   final ScrollController _scrollController = ScrollController();
@@ -58,6 +58,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _recordedVideoPath;
   Timer? _recordingTimer;
   bool _isFrontCamera = true;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
@@ -69,6 +71,15 @@ class _ChatScreenState extends State<ChatScreen> {
       ..androidOutputFormat = AndroidOutputFormat.mpeg4
       ..iosEncoder = IosEncoder.kAudioFormatMPEG4AAC
       ..sampleRate = 44100;
+    
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeIn),
+    );
+    
     _initialize();
   }
 
@@ -93,6 +104,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await _fetchFriendProfilePicture();
       await _fetchMessages();
       _setupRealtimeListener();
+      _animationController.forward();
     } catch (e) {
       setState(() {
         _errorMessage = 'Failed to initialize chat: $e';
@@ -233,7 +245,11 @@ class _ChatScreenState extends State<ChatScreen> {
   void _scrollToBottom() {
     Future.delayed(Duration.zero, () {
       if (_scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
       }
     });
   }
@@ -261,7 +277,12 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send message: $e')),
+        SnackBar(
+          content: Text('Failed to send message: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
     }
   }
@@ -279,7 +300,12 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to start recording: $e')),
+        SnackBar(
+          content: Text('Failed to start recording: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
     }
   }
@@ -302,6 +328,10 @@ class _ChatScreenState extends State<ChatScreen> {
         throw Exception('User not authenticated');
       }
 
+      setState(() {
+        _isUploading = true;
+      });
+
       final file = File(_recordedFilePath!);
       final fileName = '${DateTime.now().millisecondsSinceEpoch}_${currentUser.id}.m4a';
       await SupabaseConfig.client.storage
@@ -321,12 +351,18 @@ class _ChatScreenState extends State<ChatScreen> {
       await SupabaseConfig.client.from('messages').insert(message.toJson());
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send audio: $e')),
+        SnackBar(
+          content: Text('Failed to send audio: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
     } finally {
       setState(() {
         _isRecording = false;
         _recordedFilePath = null;
+        _isUploading = false;
       });
     }
   }
@@ -336,7 +372,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final currentUser = await _authService.getCurrentUser();
     if (currentUser == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User not authenticated')),
+        SnackBar(
+          content: const Text('User not authenticated'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
       return;
     }
@@ -354,8 +395,16 @@ class _ChatScreenState extends State<ChatScreen> {
           .single();
       if (conversation == null) throw Exception('Conversation not found');
 
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-      if (image == null) return;
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+      );
+      if (image == null) {
+        setState(() {
+          _isUploading = false;
+        });
+        return;
+      }
 
       final file = File(image.path);
       final fileName = '${DateTime.now().millisecondsSinceEpoch}_${currentUser.id}.jpg';
@@ -379,7 +428,12 @@ class _ChatScreenState extends State<ChatScreen> {
         _errorMessage = 'Failed to send image: $e';
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send image: $e')),
+        SnackBar(
+          content: Text('Failed to send image: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
     } finally {
       setState(() {
@@ -412,28 +466,48 @@ class _ChatScreenState extends State<ChatScreen> {
       showModalBottomSheet(
         context: context,
         backgroundColor: Colors.grey[900],
+        isScrollControlled: true,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         builder: (context) => StatefulBuilder(
           builder: (context, setModalState) {
-            return Padding(
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.8,
               padding: const EdgeInsets.all(16.0),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    height: 300,
-                    width: double.infinity,
-                    child: CameraPreview(_cameraController!),
+                  Container(
+                    height: 5,
+                    width: 40,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[600],
+                      borderRadius: BorderRadius.circular(2.5),
+                    ),
+                  ),
+                  const Text(
+                    'Record Video',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 16),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: CameraPreview(_cameraController!),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       if (!_isRecordingVideo)
-                        ElevatedButton(
-                          onPressed: () async {
+                        GestureDetector(
+                          onTap: () async {
                             try {
                               await _cameraController!.startVideoRecording();
                               setModalState(() {
@@ -453,21 +527,34 @@ class _ChatScreenState extends State<ChatScreen> {
                               });
                             } catch (e) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Failed to start video recording: $e')),
+                                SnackBar(
+                                  content: Text('Failed to start video recording: $e'),
+                                  backgroundColor: Colors.redAccent,
+                                ),
                               );
                               Navigator.pop(context);
                             }
                           },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4CAF50),
-                            shape: const CircleBorder(),
-                            padding: const EdgeInsets.all(20),
+                          child: Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFF4CAF50), width: 3),
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.circle,
+                                color: Color(0xFF4CAF50),
+                                size: 60,
+                              ),
+                            ),
                           ),
-                          child: const Icon(Icons.circle, color: Colors.white, size: 40),
                         ),
                       if (_isRecordingVideo)
-                        ElevatedButton(
-                          onPressed: () async {
+                        GestureDetector(
+                          onTap: () async {
                             try {
                               final xFile = await _cameraController!.stopVideoRecording();
                               _recordingTimer?.cancel();
@@ -479,20 +566,33 @@ class _ChatScreenState extends State<ChatScreen> {
                               await _sendVideoMessage();
                             } catch (e) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Failed to stop video recording: $e')),
+                                SnackBar(
+                                  content: Text('Failed to stop video recording: $e'),
+                                  backgroundColor: Colors.redAccent,
+                                ),
                               );
                             }
                           },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            shape: const CircleBorder(),
-                            padding: const EdgeInsets.all(20),
+                          child: Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.red, width: 3),
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.stop,
+                                color: Colors.red,
+                                size: 40,
+                              ),
+                            ),
                           ),
-                          child: const Icon(Icons.stop, color: Colors.white, size: 40),
                         ),
-                      const SizedBox(width: 16),
-                      ElevatedButton(
-                        onPressed: _isRecordingVideo ? null : () async {
+                      const SizedBox(width: 24),
+                      GestureDetector(
+                        onTap: _isRecordingVideo ? null : () async {
                           try {
                             setState(() {
                               _isFrontCamera = !_isFrontCamera;
@@ -509,19 +609,30 @@ class _ChatScreenState extends State<ChatScreen> {
                             setModalState(() {});
                           } catch (e) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Failed to switch camera: $e')),
+                              SnackBar(
+                                content: Text('Failed to switch camera: $e'),
+                                backgroundColor: Colors.redAccent,
+                              ),
                             );
                           }
                         },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4CAF50),
-                          shape: const CircleBorder(),
-                          padding: const EdgeInsets.all(10),
+                        child: Container(
+                          width: 50,
+                          height: 50,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.flip_camera_ios_rounded,
+                            color: Colors.white,
+                            size: 30,
+                          ),
                         ),
-                        child: const Icon(Icons.flip_camera_android, color: Colors.white, size: 30),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 24),
                 ],
               ),
             );
@@ -539,7 +650,12 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to initialize video recording: $e')),
+        SnackBar(
+          content: Text('Failed to initialize video recording: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
       _cameraController?.dispose();
       _cameraController = null;
@@ -582,7 +698,12 @@ class _ChatScreenState extends State<ChatScreen> {
         _errorMessage = 'Failed to send video: $e';
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send video: $e')),
+        SnackBar(
+          content: Text('Failed to send video: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
     } finally {
       setState(() {
@@ -648,47 +769,96 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       builder: (context) {
         return Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.symmetric(vertical: 24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(
-                leading: const Icon(Icons.mic, color: Color(0xFF4CAF50)),
-                title: const Text(
-                  'Send Audio',
-                  style: TextStyle(color: Colors.white),
+              const Text(
+                'Share Media',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
                 ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _startRecording();
-                },
               ),
-              ListTile(
-                leading: const Icon(Icons.videocam, color: Color(0xFF4CAF50)),
-                title: const Text(
-                  'Send Video',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _startVideoRecording();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo, color: Color(0xFF4CAF50)),
-                title: const Text(
-                  'Send from Gallery',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _sendImageMessage();
-                },
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildMediaOption(
+                    icon: Icons.mic,
+                    label: 'Audio',
+                    color: Colors.orange,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _startRecording();
+                    },
+                  ),
+                  _buildMediaOption(
+                    icon: Icons.videocam,
+                    label: 'Video',
+                    color: Colors.red,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _startVideoRecording();
+                    },
+                  ),
+                  _buildMediaOption(
+                    icon: Icons.photo,
+                    label: 'Gallery',
+                    color: Colors.purple,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _sendImageMessage();
+                    },
+                  ),
+                ],
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildMediaOption({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                color: color,
+                size: 30,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -699,7 +869,6 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -709,30 +878,112 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         title: Row(
           children: [
-            CircleAvatar(
-              radius: 16,
-              backgroundImage: _friendProfilePicture != null
-                  ? NetworkImage(_friendProfilePicture!)
-                  : null,
-              child: _friendProfilePicture == null
-                  ? Text(
-                      widget.friendName.isNotEmpty
-                          ? widget.friendName.substring(0, 1).toUpperCase()
-                          : 'U',
-                      style: const TextStyle(color: Colors.white),
-                    )
-                  : null,
+            Hero(
+              tag: 'profile_${widget.friendId}',
+              child: CircleAvatar(
+                radius: 18,
+                backgroundColor: Colors.grey[700],
+                backgroundImage: _friendProfilePicture != null
+                    ? NetworkImage(_friendProfilePicture!)
+                    : null,
+                child: _friendProfilePicture == null
+                    ? Text(
+                        widget.friendName.isNotEmpty
+                            ? widget.friendName.substring(0, 1).toUpperCase()
+                            : 'U',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    : null,
+              ),
             ),
-            const SizedBox(width: 8),
-            Text(
-              widget.friendName,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.friendName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    'Online',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
         centerTitle: false,
         backgroundColor: const Color(0xFF4CAF50),
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.video_call, color: Colors.white),
+            onPressed: () {
+              // Implement video call functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Video call feature coming soon'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            onPressed: () {
+              // Show more options
+              showModalBottomSheet(
+                context: context,
+                backgroundColor: Colors.grey[900],
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (context) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.person, color: Color(0xFF4CAF50)),
+                        title: const Text(
+                          'View Profile',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          // Navigate to friend profile
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.delete, color: Colors.redAccent),
+                        title: const Text(
+                          'Clear Chat',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          // Implement clear chat functionality
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -773,6 +1024,12 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                Icon(
+                  Icons.error_outline,
+                  color: Colors.redAccent,
+                  size: 48,
+                ),
+                const SizedBox(height: 16),
                 Text(
                   _errorMessage!,
                   style: TextStyle(color: Colors.red[400], fontSize: 16),
@@ -786,10 +1043,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                   ),
                   child: const Text(
                     'Retry',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -805,11 +1063,26 @@ class _ChatScreenState extends State<ChatScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           child: Container(
             height: MediaQuery.of(context).size.height - kToolbarHeight - 200,
-            child: Center(
-              child: Text(
-                'No messages yet. Start chatting with ${widget.friendName}!',
-                style: TextStyle(color: Colors.grey[400], fontSize: 16),
-              ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.chat_bubble_outline,
+                  color: Colors.grey[600],
+                  size: 64,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No messages yet',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 18),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Start chatting with ${widget.friendName}!',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
           ),
         ),
@@ -817,8 +1090,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (_isUploading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(color: Color(0xFF4CAF50)),
+            const SizedBox(height: 16),
+            Text(
+              'Uploading media...',
+              style: TextStyle(color: Colors.grey[400]),
+            ),
+          ],
+        ),
       );
     }
 
@@ -847,9 +1130,16 @@ class _ChatScreenState extends State<ChatScreen> {
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           child: Center(
-            child: Text(
-              date,
-              style: TextStyle(color: Colors.grey[400], fontSize: 12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.grey[800],
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                _formatDateHeader(date),
+                style: TextStyle(color: Colors.grey[400], fontSize: 12),
+              ),
             ),
           ),
         ),
@@ -862,180 +1152,75 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
             child: Align(
               alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: isSentByMe ? const Color(0xFF4CAF50) : Colors.grey[700],
-                  borderRadius: BorderRadius.circular(12),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.75,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    if (message.mediaType == 'image' && message.mediaUrl != null)
-                      FutureBuilder<String>(
-                        future: _getImageUrl(message.mediaUrl!),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return const CircularProgressIndicator(color: Color(0xFF4CAF50));
-                          }
-                          if (snapshot.hasError || !snapshot.hasData) {
-                            return const Text(
-                              'Failed to load image',
-                              style: TextStyle(color: Colors.red),
-                            );
-                          }
-                          return Image.network(
-                            snapshot.data!,
-                            width: 200,
-                            height: 200,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) => const Text(
-                              'Failed to load image',
-                              style: TextStyle(color: Colors.red),
-                            ),
-                          );
-                        },
-                      )
-                    else if (message.mediaType == 'audio' && message.mediaUrl != null)
-                      FutureBuilder<String>(
-                        future: _downloadAudio(message.mediaUrl!),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return const CircularProgressIndicator(color: Color(0xFF4CAF50));
-                          }
-                          if (snapshot.hasError || !snapshot.hasData) {
-                            return const Text(
-                              'Failed to load audio',
-                              style: TextStyle(color: Colors.red),
-                            );
-                          }
-                          final playerController = PlayerController();
-                          return Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: Icon(
-                                  playerController.playerState == PlayerState.playing
-                                      ? Icons.pause
-                                      : Icons.play_arrow,
-                                  color: Colors.white,
-                                ),
-                                onPressed: () async {
-                                  try {
-                                    if (playerController.playerState == PlayerState.playing) {
-                                      await playerController.pausePlayer();
-                                    } else {
-                                      await playerController.preparePlayer(
-                                        path: snapshot.data!,
-                                        shouldExtractWaveform: true,
-                                      );
-                                      await playerController.startPlayer();
-                                      playerController.onCompletion.listen((event) {
-                                        playerController.pausePlayer();
-                                      });
-                                    }
-                                  } catch (e) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('Failed to play audio: $e')),
-                                    );
-                                  }
-                                },
-                              ),
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.3),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: SizedBox(
-                                  width: 150,
-                                  height: 40,
-                                  child: AudioFileWaveforms(
-                                    size: const Size(150, 40),
-                                    playerController: playerController,
-                                    playerWaveStyle: const PlayerWaveStyle(
-                                      fixedWaveColor: Colors.white54,
-                                      liveWaveColor: Colors.white,
-                                      scaleFactor: 150,
-                                      waveThickness: 2.5,
-                                      spacing: 3,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      )
-                    else if (message.mediaType == 'video' && message.mediaUrl != null)
-                      FutureBuilder<String>(
-                        future: _getVideoUrl(message.mediaUrl!),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return const CircularProgressIndicator(color: Color(0xFF4CAF50));
-                          }
-                          if (snapshot.hasError || !snapshot.hasData) {
-                            return const Text(
-                              'Failed to load video',
-                              style: TextStyle(color: Colors.red),
-                            );
-                          }
-                          if (!_videoControllers.containsKey(message.id)) {
-                            final controller = VideoPlayerController.network(snapshot.data!);
-                            _videoControllers[message.id] = controller;
-                            controller.initialize().then((_) {
-                              setState(() {});
-                            }).catchError((e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Failed to initialize video: $e')),
-                              );
-                            });
-                          }
-                          final controller = _videoControllers[message.id]!;
-                          return GestureDetector(
-                            onTap: () {
-                              if (controller.value.isInitialized) {
-                                if (controller.value.isPlaying) {
-                                  controller.pause();
-                                } else {
-                                  controller.play();
-                                }
-                                setState(() {});
-                              }
-                            },
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                Container(
-                                  width: 150,
-                                  height: 150,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white24),
-                                  ),
-                                  child: ClipOval(
-                                    child: controller.value.isInitialized
-                                        ? VideoPlayer(controller)
-                                        : const CircularProgressIndicator(color: Color(0xFF4CAF50)),
-                                  ),
-                                ),
-                                if (controller.value.isInitialized && !controller.value.isPlaying)
-                                  const Icon(Icons.play_arrow, color: Colors.white, size: 40),
-                              ],
-                            ),
-                          );
-                        },
-                      )
-                    else
-                      Text(
-                        message.content,
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${message.createdAt.hour}:${message.createdAt.minute.toString().padLeft(2, '0')}',
-                      style: TextStyle(color: Colors.grey[400], fontSize: 10),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isSentByMe 
+                      ? const Color(0xFF4CAF50) 
+                      : Colors.grey[800],
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(16),
+                      topRight: const Radius.circular(16),
+                      bottomLeft: isSentByMe 
+                        ? const Radius.circular(16) 
+                        : const Radius.circular(4),
+                      bottomRight: isSentByMe 
+                        ? const Radius.circular(4) 
+                        : const Radius.circular(16),
                     ),
-                  ],
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (message.mediaType == 'image' && message.mediaUrl != null)
+                        _buildImageMessage(message)
+                      else if (message.mediaType == 'audio' && message.mediaUrl != null)
+                        _buildAudioMessage(message)
+                      else if (message.mediaType == 'video' && message.mediaUrl != null)
+                        _buildVideoMessage(message)
+                      else
+                        Text(
+                          message.content,
+                          style: TextStyle(
+                            color: isSentByMe ? Colors.white : Colors.white,
+                            fontSize: 16,
+                          ),
+                        ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${message.createdAt.hour}:${message.createdAt.minute.toString().padLeft(2, '0')}',
+                            style: TextStyle(
+                              color: isSentByMe ? Colors.white70 : Colors.grey[400],
+                              fontSize: 10,
+                            ),
+                          ),
+                          if (isSentByMe)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4),
+                              child: Icon(
+                                Icons.check,
+                                size: 12,
+                                color: Colors.white70,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1044,49 +1229,413 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    return ListView(
-      controller: _scrollController,
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 80.0),
-      children: messageWidgets,
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: ListView(
+        controller: _scrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 80.0),
+        children: messageWidgets,
+      ),
+    );
+  }
+
+  // Helper method to format date headers
+  String _formatDateHeader(String dateKey) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    
+    final parts = dateKey.split('/');
+    final messageDate = DateTime(
+      int.parse(parts[2]),
+      int.parse(parts[1]),
+      int.parse(parts[0]),
+    );
+    
+    if (messageDate == today) {
+      return 'Today';
+    } else if (messageDate == yesterday) {
+      return 'Yesterday';
+    } else if (now.difference(messageDate).inDays < 7) {
+      final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      return weekdays[messageDate.weekday - 1];
+    } else {
+      return dateKey;
+    }
+  }
+
+  // Helper methods for different message types
+  Widget _buildImageMessage(MessageModel message) {
+    return FutureBuilder<String>(
+      future: _getImageUrl(message.mediaUrl!),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            width: 200,
+            height: 200,
+            decoration: BoxDecoration(
+              color: Colors.grey[700],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              ),
+            ),
+          );
+        }
+        if (snapshot.hasError || !snapshot.hasData) {
+          return Container(
+            width: 200,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.grey[700],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: Text(
+                'Failed to load image',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+          );
+        }
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: GestureDetector(
+            onTap: () {
+              // Show full-screen image view
+              showDialog(
+                context: context,
+                builder: (context) => Dialog(
+                  backgroundColor: Colors.transparent,
+                  insetPadding: EdgeInsets.zero,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      InteractiveViewer(
+                        child: Image.network(
+                          snapshot.data!,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                      Positioned(
+                        top: 40,
+                        right: 20,
+                        child: IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+            child: Hero(
+              tag: 'image_${message.id}',
+              child: Image.network(
+                snapshot.data!,
+                width: 200,
+                height: 200,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  width: 200,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[700],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'Failed to load image',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAudioMessage(MessageModel message) {
+    return FutureBuilder<String>(
+      future: _downloadAudio(message.mediaUrl!),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            width: 200,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.grey[700],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              ),
+            ),
+          );
+        }
+        if (snapshot.hasError || !snapshot.hasData) {
+          return Container(
+            width: 200,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.grey[700],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: Text(
+                'Failed to load audio',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+          );
+        }
+        
+        final playerController = PlayerController();
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            StatefulBuilder(
+              builder: (context, setState) {
+                return IconButton(
+                  icon: Icon(
+                    playerController.playerState == PlayerState.playing
+                        ? Icons.pause_circle_filled
+                        : Icons.play_circle_filled,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                  onPressed: () async {
+                    try {
+                      if (playerController.playerState == PlayerState.playing) {
+                        await playerController.pausePlayer();
+                      } else {
+                        await playerController.preparePlayer(
+                          path: snapshot.data!,
+                          shouldExtractWaveform: true,
+                        );
+                        await playerController.startPlayer();
+                        playerController.onCompletion.listen((event) {
+                          setState(() {}); // Refresh UI when playback completes
+                        });
+                      }
+                      setState(() {}); // Refresh UI when play/pause state changes
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Failed to play audio: $e'),
+                          backgroundColor: Colors.redAccent,
+                        ),
+                      );
+                    }
+                  },
+                );
+              },
+            ),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: SizedBox(
+                width: 150,
+                height: 40,
+                child: AudioFileWaveforms(
+                  size: const Size(150, 40),
+                  playerController: playerController,
+                  playerWaveStyle: const PlayerWaveStyle(
+                    fixedWaveColor: Colors.white54,
+                    liveWaveColor: Colors.white,
+                    scaleFactor: 150,
+                    waveThickness: 2.5,
+                    spacing: 3,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildVideoMessage(MessageModel message) {
+    return FutureBuilder<String>(
+      future: _getVideoUrl(message.mediaUrl!),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            width: 150,
+            height: 150,
+            decoration: BoxDecoration(
+              color: Colors.grey[700],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              ),
+            ),
+          );
+        }
+        if (snapshot.hasError || !snapshot.hasData) {
+          return Container(
+            width: 150,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.grey[700],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: Text(
+                'Failed to load video',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+          );
+        }
+        
+        if (!_videoControllers.containsKey(message.id)) {
+          final controller = VideoPlayerController.network(snapshot.data!);
+          _videoControllers[message.id] = controller;
+          controller.initialize().then((_) {
+            setState(() {});
+          }).catchError((e) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to initialize video: $e'),
+                backgroundColor: Colors.redAccent,
+              ),
+            );
+          });
+        }
+        
+        final controller = _videoControllers[message.id]!;
+        return GestureDetector(
+          onTap: () {
+            if (controller.value.isInitialized) {
+              if (controller.value.isPlaying) {
+                controller.pause();
+              } else {
+                controller.play();
+              }
+              setState(() {});
+            }
+          },
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              width: 200,
+              height: 200,
+              color: Colors.black,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  controller.value.isInitialized
+                      ? AspectRatio(
+                          aspectRatio: controller.value.aspectRatio,
+                          child: VideoPlayer(controller),
+                        )
+                      : Container(
+                          color: Colors.grey[800],
+                          child: const Center(
+                            child: CircularProgressIndicator(
+                              color: Color(0xFF4CAF50),
+                            ),
+                          ),
+                        ),
+                  if (controller.value.isInitialized && !controller.value.isPlaying)
+                    Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow,
+                        color: Colors.white,
+                        size: 30,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
   Widget _buildMessageInput() {
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.grey[850],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, -1),
+          ),
+        ],
+      ),
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.attach_file, color: Color(0xFF4CAF50)),
+            icon: const Icon(Icons.add_circle_outline, color: Color(0xFF4CAF50)),
             onPressed: () => _showMediaOptions(context),
             tooltip: 'Attach Media',
           ),
           Expanded(
             child: _isRecording
-                ? AudioWaveforms(
-                    size: Size(MediaQuery.of(context).size.width * 0.7, 50),
-                    recorderController: _recorderController,
-                    waveStyle: const WaveStyle(
-                      waveColor: Colors.white,
-                      extendWaveform: true,
-                      showMiddleLine: false,
-                    ),
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12.0),
                       color: Colors.grey[800],
+                      borderRadius: BorderRadius.circular(24),
                     ),
-                    padding: const EdgeInsets.only(left: 16),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.mic, color: Colors.redAccent, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: AudioWaveforms(
+                            size: Size(MediaQuery.of(context).size.width * 0.6, 40),
+                            recorderController: _recorderController,
+                            waveStyle: const WaveStyle(
+                              waveColor: Colors.white,
+                              extendWaveform: true,
+                              showMiddleLine: false,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12.0),
+                              color: Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   )
                 : TextField(
                     controller: _messageController,
                     decoration: InputDecoration(
-                      hintText: 'Type a message...',
+                      hintText: 'Message ${widget.friendName}...',
                       hintStyle: TextStyle(color: Colors.grey[400]),
                       filled: true,
                       fillColor: Colors.grey[800],
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20.0),
+                        borderRadius: BorderRadius.circular(24.0),
                         borderSide: BorderSide.none,
                       ),
                       contentPadding: const EdgeInsets.symmetric(
@@ -1101,18 +1650,30 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 8.0),
           _isRecording
-              ? IconButton(
-                  icon: const Icon(Icons.stop, color: Color(0xFF4CAF50)),
-                  onPressed: _stopRecordingAndSend,
-                  tooltip: 'Stop Recording',
-                )
-              : IconButton(
-                  icon: Icon(
-                    Icons.send,
-                    color: _canSend ? const Color(0xFF4CAF50) : Colors.grey,
+              ? Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.redAccent,
+                    shape: BoxShape.circle,
                   ),
-                  onPressed: _canSend ? _sendMessage : null,
-                  tooltip: 'Send',
+                  child: IconButton(
+                    icon: const Icon(Icons.stop, color: Colors.white),
+                    onPressed: _stopRecordingAndSend,
+                    tooltip: 'Stop Recording',
+                  ),
+                )
+              : Container(
+                  decoration: BoxDecoration(
+                    color: _canSend ? const Color(0xFF4CAF50) : Colors.grey[700],
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: Icon(
+                      _canSend ? Icons.send : Icons.mic,
+                      color: Colors.white,
+                    ),
+                    onPressed: _canSend ? _sendMessage : _startRecording,
+                    tooltip: _canSend ? 'Send' : 'Record Audio',
+                  ),
                 ),
         ],
       ),
@@ -1128,6 +1689,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _recorderController.dispose();
     _cameraController?.dispose();
     _recordingTimer?.cancel();
+    _animationController.dispose();
     for (var path in _localAudioPaths.values) {
       File(path).deleteSync();
     }
