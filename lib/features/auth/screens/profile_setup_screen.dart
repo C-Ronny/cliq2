@@ -92,6 +92,21 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> with SingleTick
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const SizedBox(height: 40),
+                  // App logo
+                  Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4CAF50).withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.chat_bubble_outline,
+                      color: Color(0xFF4CAF50),
+                      size: 40,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                   const Text(
                     'Cliq',
                     style: TextStyle(
@@ -100,14 +115,14 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> with SingleTick
                       color: Color(0xFF4CAF50),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 24),
                   const Text(
                     'Set Up Your Profile',
                     style: TextStyle(
-                      fontSize: 32,
+                      fontSize: 28,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFFFFFFFF),
-                      letterSpacing: 1.2,
+                      letterSpacing: 0.5,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -119,33 +134,101 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> with SingleTick
                     ),
                   ),
                   const SizedBox(height: 40),
+                  // Profile picture placeholder
+                  Stack(
+                    children: [
+                      Container(
+                        width: 100,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[800],
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Text(
+                            _firstNameController.text.isNotEmpty 
+                                ? _firstNameController.text[0].toUpperCase() 
+                                : 'U',
+                            style: const TextStyle(
+                              fontSize: 40,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4CAF50),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: const Color(0xFF121212), width: 2),
+                          ),
+                          child: const Icon(
+                            Icons.add_a_photo,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
                   AuthTextField(
                     label: 'First Name',
                     controller: _firstNameController,
+                    prefixIcon: const Icon(Icons.person_outline, color: Color(0xFFB3B3B3), size: 20),
+                    textInputAction: TextInputAction.next,
                   ),
                   AuthTextField(
                     label: 'Last Name',
                     controller: _lastNameController,
+                    prefixIcon: const Icon(Icons.person_outline, color: Color(0xFFB3B3B3), size: 20),
+                    textInputAction: TextInputAction.done,
                   ),
                   if (_errorMessage != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      _errorMessage!,
-                      style: const TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 14,
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      textAlign: TextAlign.center,
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            color: Colors.redAccent,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _errorMessage!,
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 32),
                   SizedBox(
                     width: double.infinity,
-                    height: 50,
+                    height: 54,
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _createProfile,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF4CAF50),
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: const Color(0xFF4CAF50).withOpacity(0.6),
+                        elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),

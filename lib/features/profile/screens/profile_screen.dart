@@ -36,6 +36,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _usernameController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
@@ -137,7 +138,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-Future<void> _logout() async {
+  Future<void> _logout() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -160,11 +161,72 @@ Future<void> _logout() async {
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        elevation: 0,
+        centerTitle: true,
+        title: const Text(
+          'Profile',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.redAccent),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  backgroundColor: const Color(0xFF1E1E1E),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  title: const Text(
+                    'Logout',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  content: const Text(
+                    'Are you sure you want to logout?',
+                    style: TextStyle(color: Color(0xFFB3B3B3)),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(color: Color(0xFFB3B3B3)),
+                      ),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _logout();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text('Logout'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(
@@ -173,12 +235,34 @@ Future<void> _logout() async {
             )
           : _user == null
               ? Center(
-                  child: Text(
-                    _errorMessage ?? 'User not found.',
-                    style: const TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 16,
-                    ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        color: Colors.redAccent,
+                        size: 64,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _errorMessage ?? 'User not found.',
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: () => context.go('/login'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF4CAF50),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('Go to Login'),
+                      ),
+                    ],
                   ),
                 )
               : RefreshIndicator(
@@ -190,282 +274,452 @@ Future<void> _logout() async {
                       padding: const EdgeInsets.symmetric(horizontal: 24.0),
                       child: Column(
                         children: [
-                          const SizedBox(height: 48),
-                          Stack(
-                            children: [
-                              CircleAvatar(
-                                radius: 55,
-                                backgroundImage: _pickedImage != null
-                                    ? FileImage(File(_pickedImage!.path))
-                                    : _user!.profilePicture != null
-                                        ? NetworkImage(_user!.profilePicture!)
-                                        : null,
-                                child: _pickedImage == null && _user!.profilePicture == null
-                                    ? Text(
-                                        _user!.firstName != null && _user!.firstName!.isNotEmpty
-                                            ? _user!.firstName![0].toUpperCase()
-                                            : 'U',
-                                        style: const TextStyle(
-                                          fontSize: 40,
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      )
-                                    : null,
-                              ),
-                              Positioned(
-                                bottom: 0,
-                                right: 0,
-                                child: GestureDetector(
-                                  onTap: _pickImage,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFF4CAF50),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.camera_alt,
-                                      color: Colors.white,
-                                      size: 15,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            _user!.username ?? 'No username',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${_user!.firstName ?? ''} ${_user!.lastName ?? ''}', 
-                            style: const TextStyle(
-                              color: Color(0xFF4CAF50),
-                              fontSize: 16,
-                            ),
-                          ),
                           const SizedBox(height: 24),
-                          if (_errorMessage != null) ...[
-                            Text(
-                              _errorMessage!,
-                              style: const TextStyle(
-                                color: Colors.redAccent,
-                                fontSize: 14,
-                              ),
-                              textAlign: TextAlign.center,
+                          // Profile header with animation
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E1E1E),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 5),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 16),
-                          ],
-                          Form(
-                            key: _formKey,
                             child: Column(
                               children: [
-                                TextFormField(
-                                  controller: _usernameController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: 'Username',
-                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
-                                    filled: true,
-                                    fillColor: const Color(0xFF121212), // Match the scaffold background
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
+                                Stack(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: const Color(0xFF4CAF50),
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: CircleAvatar(
+                                        radius: 60,
+                                        backgroundColor: Colors.grey[800],
+                                        backgroundImage: _pickedImage != null
+                                            ? FileImage(File(_pickedImage!.path))
+                                            : _user!.profilePicture != null
+                                                ? NetworkImage(_user!.profilePicture!)
+                                                : null,
+                                        child: _pickedImage == null && _user!.profilePicture == null
+                                            ? Text(
+                                                _user!.firstName != null && _user!.firstName!.isNotEmpty
+                                                    ? _user!.firstName![0].toUpperCase()
+                                                    : 'U',
+                                                style: const TextStyle(
+                                                  fontSize: 40,
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              )
+                                            : null,
+                                      ),
                                     ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
+                                    Positioned(
+                                      bottom: 0,
+                                      right: 0,
+                                      child: GestureDetector(
+                                        onTap: _pickImage,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF4CAF50),
+                                            shape: BoxShape.circle,
+                                            border: Border.all(color: const Color(0xFF1E1E1E), width: 2),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black.withOpacity(0.2),
+                                                blurRadius: 5,
+                                                offset: const Offset(0, 2),
+                                              ),
+                                            ],
+                                          ),
+                                          child: const Icon(
+                                            Icons.camera_alt,
+                                            color: Colors.white,
+                                            size: 18,
+                                          ),
+                                        ),
+                                      ),
                                     ),
-                                    disabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
-                                    ),
-                                  ),
-                                  enabled: _isEditing,
-                                  validator: (value) {
-                                    if (value != null && value.length < 3 && value.isNotEmpty) {
-                                      return 'Username must be at least 3 characters';
-                                    }
-                                    return null;
-                                  },
+                                  ],
                                 ),
                                 const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _firstNameController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: 'First Name',
-                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
-                                    filled: true,
-                                    fillColor: const Color(0xFF121212), // Match the scaffold background
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
-                                    ),
-                                    disabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
-                                    ),
+                                Text(
+                                  _user!.username ?? 'No username',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  enabled: _isEditing,
-                                  validator: (value) {
-                                    if (value != null && value.length < 2 && value.isNotEmpty) {
-                                      return 'First name must be at least 2 characters';
-                                    }
-                                    return null;
-                                  },
                                 ),
-                                const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _lastNameController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: 'Last Name',
-                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
-                                    filled: true,
-                                    fillColor: const Color(0xFF121212), // Match the scaffold background
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
-                                    ),
-                                    disabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
-                                    ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  '${_user!.firstName ?? ''} ${_user!.lastName ?? ''}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF4CAF50),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
                                   ),
-                                  enabled: _isEditing,
-                                  validator: (value) {
-                                    if (value != null && value.length < 2 && value.isNotEmpty) {
-                                      return 'Last name must be at least 2 characters';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _emailController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: 'Email',
-                                    labelStyle: const TextStyle(color: Color(0xFF4CAF50)),
-                                    filled: true,
-                                    fillColor: const Color(0xFF121212), // Match the scaffold background
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFFB3B3B3)),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color.fromARGB(255, 89, 238, 94)),
-                                    ),
-                                    disabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(color: Color(0xFF4CAF50)),
-                                    ),
-                                  ),
-                                  enabled: _isEditing,
-                                  validator: (value) {
-                                    if (value == null || value.trim().isEmpty) {
-                                      return 'Email address is required';
-                                    }
-
-                                    final emailRegex = RegExp(
-                                      r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$',
-                                    );
-
-                                    if (!emailRegex.hasMatch(value)) {
-                                      return 'Please enter a valid email address';
-                                    }
-
-                                    return null;
-                                  },
                                 ),
                               ],
                             ),
                           ),
                           const SizedBox(height: 24),
+                          if (_errorMessage != null) ...[
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.redAccent.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.error_outline,
+                                    color: Colors.redAccent,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _errorMessage!,
+                                      style: const TextStyle(
+                                        color: Colors.redAccent,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                          // Profile form with card style
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E1E1E),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: _isEditing ? [
+                                BoxShadow(
+                                  color: const Color(0xFF4CAF50).withOpacity(0.2),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 5),
+                                ),
+                              ] : null,
+                            ),
+                            child: Form(
+                              key: _formKey,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 4, bottom: 16),
+                                    child: Text(
+                                      _isEditing ? 'Edit Profile' : 'Profile Information',
+                                      style: TextStyle(
+                                        color: _isEditing ? const Color(0xFF4CAF50) : Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  TextFormField(
+                                    controller: _usernameController,
+                                    style: const TextStyle(color: Colors.white),
+                                    decoration: InputDecoration(
+                                      labelText: 'Username',
+                                      labelStyle: TextStyle(
+                                        color: _isEditing ? const Color(0xFF4CAF50) : Colors.grey,
+                                      ),
+                                      filled: true,
+                                      fillColor: const Color(0xFF121212),
+                                      prefixIcon: const Icon(Icons.alternate_email, color: Color(0xFFB3B3B3), size: 20),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: _isEditing ? const Color(0xFFB3B3B3) : Colors.transparent,
+                                        ),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 1.5),
+                                      ),
+                                      disabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                    ),
+                                    enabled: _isEditing,
+                                    validator: (value) {
+                                      if (value != null && value.length < 3 && value.isNotEmpty) {
+                                        return 'Username must be at least 3 characters';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _firstNameController,
+                                    style: const TextStyle(color: Colors.white),
+                                    decoration: InputDecoration(
+                                      labelText: 'First Name',
+                                      labelStyle: TextStyle(
+                                        color: _isEditing ? const Color(0xFF4CAF50) : Colors.grey,
+                                      ),
+                                      filled: true,
+                                      fillColor: const Color(0xFF121212),
+                                      prefixIcon: const Icon(Icons.person_outline, color: Color(0xFFB3B3B3), size: 20),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: _isEditing ? const Color(0xFFB3B3B3) : Colors.transparent,
+                                        ),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 1.5),
+                                      ),
+                                      disabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                    ),
+                                    enabled: _isEditing,
+                                    validator: (value) {
+                                      if (value != null && value.length < 2 && value.isNotEmpty) {
+                                        return 'First name must be at least 2 characters';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _lastNameController,
+                                    style: const TextStyle(color: Colors.white),
+                                    decoration: InputDecoration(
+                                      labelText: 'Last Name',
+                                      labelStyle: TextStyle(
+                                        color: _isEditing ? const Color(0xFF4CAF50) : Colors.grey,
+                                      ),
+                                      filled: true,
+                                      fillColor: const Color(0xFF121212),
+                                      prefixIcon: const Icon(Icons.person_outline, color: Color(0xFFB3B3B3), size: 20),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: _isEditing ? const Color(0xFFB3B3B3) : Colors.transparent,
+                                        ),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 1.5),
+                                      ),
+                                      disabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                    ),
+                                    enabled: _isEditing,
+                                    validator: (value) {
+                                      if (value != null && value.length < 2 && value.isNotEmpty) {
+                                        return 'Last name must be at least 2 characters';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _emailController,
+                                    style: const TextStyle(color: Colors.white),
+                                    decoration: InputDecoration(
+                                      labelText: 'Email',
+                                      labelStyle: TextStyle(
+                                        color: _isEditing ? const Color(0xFF4CAF50) : Colors.grey,
+                                      ),
+                                      filled: true,
+                                      fillColor: const Color(0xFF121212),
+                                      prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFFB3B3B3), size: 20),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: _isEditing ? const Color(0xFFB3B3B3) : Colors.transparent,
+                                        ),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 1.5),
+                                      ),
+                                      disabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                    ),
+                                    enabled: _isEditing,
+                                    validator: (value) {
+                                      if (value == null || value.trim().isEmpty) {
+                                        return 'Email address is required';
+                                      }
+
+                                      final emailRegex = RegExp(
+                                        r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$',
+                                      );
+
+                                      if (!emailRegex.hasMatch(value)) {
+                                        return 'Please enter a valid email address';
+                                      }
+
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          // Action buttons
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              ElevatedButton(
-                                onPressed: _isEditing ? _updateProfile : () => setState(() => _isEditing = true),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF4CAF50),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 32,
-                                    vertical: 12,
-                                  ),
-                                ),
-                                child: Text(
-                                  _isEditing ? 'Save' : 'Edit Profile',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              if (_isEditing)
-                                ElevatedButton(
-                                  onPressed: () {
-                                    setState(() {
-                                      _isEditing = false;
-                                      _usernameController.text = _user!.username ?? '';
-                                      _firstNameController.text = _user!.firstName ?? '';
-                                      _lastNameController.text = _user!.lastName ?? '';
-                                      _emailController.text = _user!.email ?? '';
-                                    });
-                                  },
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: _isEditing ? _updateProfile : () => setState(() => _isEditing = true),
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.redAccent,
+                                    backgroundColor: const Color(0xFF4CAF50),
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: 32,
-                                      vertical: 12,
+                                      vertical: 16,
                                     ),
                                   ),
-                                  child: const Text(
-                                    'Cancel',
-                                    style: TextStyle(
+                                  child: Text(
+                                    _isEditing ? 'Save Changes' : 'Edit Profile',
+                                    style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 16,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
+                              ),
+                              if (_isEditing) ...[
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _isEditing = false;
+                                        _usernameController.text = _user!.username ?? '';
+                                        _firstNameController.text = _user!.firstName ?? '';
+                                        _lastNameController.text = _user!.lastName ?? '';
+                                        _emailController.text = _user!.email ?? '';
+                                      });
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.grey[800],
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 16,
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      'Cancel',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
-                          const SizedBox(height: 24),
-                          TextButton(
-                            onPressed: _logout,
-                            child: const Text(
-                              'Logout',
-                              style: TextStyle(
-                                color: Colors.redAccent,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
+                          const SizedBox(height: 32),
+                          // Settings section
+                          Container(
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E1E1E),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildSettingItem(
+                                  icon: Icons.logout,
+                                  title: 'Logout',
+                                  subtitle: 'Sign out from your account',
+                                  iconColor: Colors.redAccent,
+                                  onTap: () {
+                                    showDialog(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        backgroundColor: const Color(0xFF1E1E1E),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        title: const Text(
+                                          'Logout',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        content: const Text(
+                                          'Are you sure you want to logout?',
+                                          style: TextStyle(color: Color(0xFFB3B3B3)),
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(context),
+                                            child: const Text(
+                                              'Cancel',
+                                              style: TextStyle(color: Color(0xFFB3B3B3)),
+                                            ),
+                                          ),
+                                          ElevatedButton(
+                                            onPressed: () {
+                                              Navigator.pop(context);
+                                              _logout();
+                                            },
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.redAccent,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                            ),
+                                            child: const Text('Logout'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
                           ),
                           const SizedBox(height: 80),
@@ -474,6 +728,68 @@ Future<void> _logout() async {
                     ),
                   ),
                 ),
+    );
+  }
+  
+  Widget _buildSettingItem({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    Color iconColor = Colors.white,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 4.0),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.grey[800],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                color: iconColor,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.grey[400],
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios,
+              color: Colors.grey[600],
+              size: 16,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
