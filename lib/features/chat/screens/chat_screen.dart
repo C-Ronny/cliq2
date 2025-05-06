@@ -6,6 +6,9 @@ import 'dart:io';
 import '../../auth/auth_service.dart';
 import '../../../config/supabase.dart';
 import '../../../models/message_model.dart';
+import 'package:audio_waveforms/audio_waveforms.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 
 class ChatScreen extends StatefulWidget {
   final String friendName;
@@ -28,6 +31,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final AuthService _authService = AuthService();
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
+  late final RecorderController _recorderController;
   List<MessageModel> _messages = [];
   RealtimeChannel? _messagesChannel;
   bool _canSend = false;
@@ -40,12 +44,21 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _hasMoreMessages = true;
   String? _friendProfilePicture;
   Map<String, String> _imageUrls = {};
+  Map<String, String> _audioUrls = {};
+  Map<String, String> _localAudioPaths = {};
+  bool _isRecording = false;
+  String? _recordedFilePath;
 
   @override
   void initState() {
     super.initState();
     _messageController.addListener(_updateCanSend);
     _scrollController.addListener(_scrollListener);
+    _recorderController = RecorderController()
+      ..androidEncoder = AndroidEncoder.aac
+      ..androidOutputFormat = AndroidOutputFormat.mpeg4
+      ..iosEncoder = IosEncoder.kAudioFormatMPEG4AAC
+      ..sampleRate = 44100;
     _initialize();
   }
 
@@ -65,6 +78,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
+      await _requestPermissions();
       await _fetchCurrentUser();
       await _fetchFriendProfilePicture();
       await _fetchMessages();
@@ -77,6 +91,13 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _requestPermissions() async {
+    final status = await Permission.microphone.request();
+    if (status != PermissionStatus.granted) {
+      throw Exception('Microphone permission not granted');
     }
   }
 
@@ -231,6 +252,71 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _startRecording() async {
+    if (_isRecording) return;
+    final directory = await getApplicationDocumentsDirectory();
+    final path = '${directory.path}/${DateTime.now().millisecondsSinceEpoch}.m4a';
+
+    try {
+      await _recorderController.record(path: path);
+      setState(() {
+        _isRecording = true;
+        _recordedFilePath = path;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to start recording: $e')),
+      );
+    }
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    if (!_isRecording) return;
+
+    try {
+      final path = await _recorderController.stop();
+      setState(() {
+        _isRecording = false;
+      });
+
+      if (path == null || _recordedFilePath == null) {
+        throw Exception('Recording path is null');
+      }
+
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser == null) {
+        throw Exception('User not authenticated');
+      }
+
+      final file = File(_recordedFilePath!);
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${currentUser.id}.m4a';
+      await SupabaseConfig.client.storage
+          .from('chat-media')
+          .upload(fileName, file, fileOptions: const FileOptions(contentType: 'audio/m4a'));
+
+      final message = MessageModel(
+        id: '',
+        content: '',
+        senderId: currentUser.id,
+        createdAt: DateTime.now(),
+        conversationId: widget.conversationId,
+        mediaType: 'audio',
+        mediaUrl: fileName,
+      );
+
+      await SupabaseConfig.client.from('messages').insert(message.toJson());
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send audio: $e')),
+      );
+    } finally {
+      setState(() {
+        _isRecording = false;
+        _recordedFilePath = null;
+      });
+    }
+  }
+
   Future<void> _sendImageMessage() async {
     if (widget.conversationId.isEmpty) return;
     final currentUser = await _authService.getCurrentUser();
@@ -298,6 +384,32 @@ class _ChatScreenState extends State<ChatScreen> {
     return signedUrl;
   }
 
+  Future<String> _getAudioUrl(String mediaUrl) async {
+    if (_audioUrls.containsKey(mediaUrl)) return _audioUrls[mediaUrl]!;
+    final signedUrl = await SupabaseConfig.client.storage
+        .from('chat-media')
+        .createSignedUrl(mediaUrl, 60);
+    _audioUrls[mediaUrl] = signedUrl;
+    return signedUrl;
+  }
+
+  Future<String> _downloadAudio(String mediaUrl) async {
+    if (_localAudioPaths.containsKey(mediaUrl)) return _localAudioPaths[mediaUrl]!;
+
+    final signedUrl = await _getAudioUrl(mediaUrl);
+    final directory = await getTemporaryDirectory();
+    final localPath = '${directory.path}/${mediaUrl.split('/').last}';
+    final file = File(localPath);
+
+    final response = await SupabaseConfig.client.storage
+        .from('chat-media')
+        .download(mediaUrl);
+    await file.writeAsBytes(response);
+
+    _localAudioPaths[mediaUrl] = localPath;
+    return localPath;
+  }
+
   void _showMediaOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -319,9 +431,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Audio sending not yet implemented')),
-                  );
+                  _startRecording();
                 },
               ),
               ListTile(
@@ -362,7 +472,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      resizeToAvoidBottomInset: false, // Prevent resizing when keyboard appears
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -559,6 +669,63 @@ class _ChatScreenState extends State<ChatScreen> {
                           );
                         },
                       )
+                    else if (message.mediaType == 'audio' && message.mediaUrl != null)
+                      FutureBuilder<String>(
+                        future: _downloadAudio(message.mediaUrl!),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const CircularProgressIndicator(color: Color(0xFF4CAF50));
+                          }
+                          if (snapshot.hasError || !snapshot.hasData) {
+                            return const Text(
+                              'Failed to load audio',
+                              style: TextStyle(color: Colors.red),
+                            );
+                          }
+                          final playerController = PlayerController();
+                          return Row(
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  playerController.playerState == PlayerState.playing
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () async {
+                                  try {
+                                    if (playerController.playerState == PlayerState.playing) {
+                                      await playerController.pausePlayer();
+                                    } else {
+                                      await playerController.preparePlayer(
+                                        path: snapshot.data!,
+                                        shouldExtractWaveform: true,
+                                      );
+                                      await playerController.startPlayer();
+                                    }
+                                  } catch (e) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Failed to play audio: $e')),
+                                    );
+                                  }
+                                },
+                              ),
+                              Expanded(
+                                child: AudioFileWaveforms(
+                                  size: const Size(200, 50),
+                                  playerController: playerController,
+                                  playerWaveStyle: const PlayerWaveStyle(
+                                    fixedWaveColor: Colors.white,
+                                    liveWaveColor: Colors.white70,
+                                    scaleFactor: 100,
+                                    waveThickness: 2,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      )
                     else
                       Text(
                         message.content,
@@ -581,7 +748,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return ListView(
       controller: _scrollController,
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 80.0), // Space for input field
+      padding: const EdgeInsets.only(bottom: 80.0),
       children: messageWidgets,
     );
   }
@@ -597,36 +764,57 @@ class _ChatScreenState extends State<ChatScreen> {
             tooltip: 'Attach Media',
           ),
           Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: 'Type a message...',
-                hintStyle: TextStyle(color: Colors.grey[400]),
-                filled: true,
-                fillColor: Colors.grey[800],
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(20.0),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16.0,
-                  vertical: 10.0,
-                ),
-              ),
-              style: const TextStyle(color: Colors.white),
-              minLines: 1,
-              maxLines: 5,
-            ),
+            child: _isRecording
+                ? AudioWaveforms(
+                    size: Size(MediaQuery.of(context).size.width * 0.7, 50),
+                    recorderController: _recorderController,
+                    waveStyle: const WaveStyle(
+                      waveColor: Colors.white,
+                      extendWaveform: true,
+                      showMiddleLine: false,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12.0),
+                      color: Colors.grey[800],
+                    ),
+                    padding: const EdgeInsets.only(left: 16),
+                  )
+                : TextField(
+                    controller: _messageController,
+                    decoration: InputDecoration(
+                      hintText: 'Type a message...',
+                      hintStyle: TextStyle(color: Colors.grey[400]),
+                      filled: true,
+                      fillColor: Colors.grey[800],
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20.0),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16.0,
+                        vertical: 10.0,
+                      ),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    minLines: 1,
+                    maxLines: 5,
+                  ),
           ),
           const SizedBox(width: 8.0),
-          IconButton(
-            icon: Icon(
-              Icons.send,
-              color: _canSend ? const Color(0xFF4CAF50) : Colors.grey,
-            ),
-            onPressed: _canSend ? _sendMessage : null,
-            tooltip: 'Send',
-          ),
+          _isRecording
+              ? IconButton(
+                  icon: const Icon(Icons.stop, color: Color(0xFF4CAF50)),
+                  onPressed: _stopRecordingAndSend,
+                  tooltip: 'Stop Recording',
+                )
+              : IconButton(
+                  icon: Icon(
+                    Icons.send,
+                    color: _canSend ? const Color(0xFF4CAF50) : Colors.grey,
+                  ),
+                  onPressed: _canSend ? _sendMessage : null,
+                  tooltip: 'Send',
+                ),
         ],
       ),
     );
@@ -638,6 +826,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.removeListener(_scrollListener);
     _scrollController.dispose();
     _messagesChannel?.unsubscribe();
+    _recorderController.dispose();
+    for (var path in _localAudioPaths.values) {
+      File(path).deleteSync();
+    }
     super.dispose();
   }
 }
