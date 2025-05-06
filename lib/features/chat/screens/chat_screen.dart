@@ -9,6 +9,9 @@ import '../../../models/message_model.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:camera/camera.dart';
+import 'package:video_player/video_player.dart';
+import 'dart:async';
 
 class ChatScreen extends StatefulWidget {
   final String friendName;
@@ -45,9 +48,16 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _friendProfilePicture;
   Map<String, String> _imageUrls = {};
   Map<String, String> _audioUrls = {};
+  Map<String, String> _videoUrls = {};
   Map<String, String> _localAudioPaths = {};
+  Map<String, VideoPlayerController> _videoControllers = {};
   bool _isRecording = false;
   String? _recordedFilePath;
+  CameraController? _cameraController;
+  bool _isRecordingVideo = false;
+  String? _recordedVideoPath;
+  Timer? _recordingTimer;
+  int _cameraIndex = 0;
 
   @override
   void initState() {
@@ -95,9 +105,13 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _requestPermissions() async {
-    final status = await Permission.microphone.request();
-    if (status != PermissionStatus.granted) {
+    final microphoneStatus = await Permission.microphone.request();
+    if (microphoneStatus != PermissionStatus.granted) {
       throw Exception('Microphone permission not granted');
+    }
+    final cameraStatus = await Permission.camera.request();
+    if (cameraStatus != PermissionStatus.granted) {
+      throw Exception('Camera permission not granted');
     }
   }
 
@@ -321,7 +335,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (widget.conversationId.isEmpty) return;
     final currentUser = await _authService.getCurrentUser();
     if (currentUser == null) {
-      print('DEBUG: User not authenticated - _authService.getCurrentUser() returned null');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('User not authenticated')),
       );
@@ -373,6 +386,213 @@ class _ChatScreenState extends State<ChatScreen> {
         _isUploading = false;
       });
     }
+  }
+
+  Future<void> _startVideoRecording() async {
+    if (_isRecordingVideo) return;
+
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) throw Exception('No camera available');
+      _cameraIndex = _cameraIndex % cameras.length;
+      _cameraController = CameraController(cameras[_cameraIndex], ResolutionPreset.medium);
+      await _cameraController!.initialize();
+
+      final directory = await getTemporaryDirectory();
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+      final path = '${directory.path}/${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.grey[900],
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (context) => StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 300,
+                    width: double.infinity,
+                    child: CameraPreview(_cameraController!),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (!_isRecordingVideo)
+                        ElevatedButton(
+                          onPressed: () async {
+                            try {
+                              await _cameraController!.startVideoRecording();
+                              setModalState(() {
+                                _isRecordingVideo = true;
+                                _recordedVideoPath = path;
+                              });
+                              _recordingTimer = Timer(const Duration(seconds: 60), () async {
+                                if (_isRecordingVideo) {
+                                  final xFile = await _cameraController!.stopVideoRecording();
+                                  setModalState(() {
+                                    _isRecordingVideo = false;
+                                  });
+                                  Navigator.pop(context);
+                                  _recordedVideoPath = xFile.path;
+                                  await _sendVideoMessage();
+                                }
+                              });
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Failed to start video recording: $e')),
+                              );
+                              Navigator.pop(context);
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4CAF50),
+                            shape: const CircleBorder(),
+                            padding: const EdgeInsets.all(20),
+                          ),
+                          child: const Icon(Icons.circle, color: Colors.white, size: 40),
+                        ),
+                      if (_isRecordingVideo)
+                        ElevatedButton(
+                          onPressed: () async {
+                            try {
+                              final xFile = await _cameraController!.stopVideoRecording();
+                              _recordingTimer?.cancel();
+                              setModalState(() {
+                                _isRecordingVideo = false;
+                              });
+                              Navigator.pop(context);
+                              _recordedVideoPath = xFile.path;
+                              await _sendVideoMessage();
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Failed to stop video recording: $e')),
+                              );
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            shape: const CircleBorder(),
+                            padding: const EdgeInsets.all(20),
+                          ),
+                          child: const Icon(Icons.stop, color: Colors.white, size: 40),
+                        ),
+                      const SizedBox(width: 16),
+                      ElevatedButton(
+                        onPressed: _isRecordingVideo ? null : () async {
+                          final cameras = await availableCameras();
+                          if (cameras.length > 1) {
+                            setModalState(() {
+                              _cameraIndex = (_cameraIndex + 1) % cameras.length;
+                              _cameraController?.dispose();
+                              _cameraController = CameraController(cameras[_cameraIndex], ResolutionPreset.medium);
+                              _cameraController!.initialize().then((_) {
+                                setModalState(() {});
+                              }).catchError((e) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Failed to switch camera: $e')),
+                                );
+                              });
+                            });
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF4CAF50),
+                          shape: const CircleBorder(),
+                          padding: const EdgeInsets.all(10),
+                        ),
+                        child: const Icon(Icons.flip_camera_android, color: Colors.white, size: 30),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ).whenComplete(() {
+        _recordingTimer?.cancel();
+        _cameraController?.dispose();
+        _cameraController = null;
+        if (_isRecordingVideo) {
+          setState(() {
+            _isRecordingVideo = false;
+          });
+        }
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to initialize video recording: $e')),
+      );
+      _cameraController?.dispose();
+      _cameraController = null;
+    }
+  }
+
+  Future<void> _sendVideoMessage() async {
+    if (_recordedVideoPath == null || widget.conversationId.isEmpty) return;
+    final currentUser = await _authService.getCurrentUser();
+    if (currentUser == null) return;
+
+    setState(() {
+      _isUploading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final file = File(_recordedVideoPath!);
+      if (!await file.exists()) {
+        throw Exception('Video file not found at: $_recordedVideoPath');
+      }
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${currentUser.id}.mp4';
+      await SupabaseConfig.client.storage
+          .from('chat-media')
+          .upload(fileName, file, fileOptions: const FileOptions(contentType: 'video/mp4'));
+
+      final message = MessageModel(
+        id: '',
+        content: '',
+        senderId: currentUser.id,
+        createdAt: DateTime.now(),
+        conversationId: widget.conversationId,
+        mediaType: 'video',
+        mediaUrl: fileName,
+      );
+
+      await SupabaseConfig.client.from('messages').insert(message.toJson());
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to send video: $e';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send video: $e')),
+      );
+    } finally {
+      setState(() {
+        _isUploading = false;
+        _recordedVideoPath = null;
+        _isRecordingVideo = false;
+      });
+      _cameraController?.dispose();
+      _cameraController = null;
+    }
+  }
+
+  Future<String> _getVideoUrl(String mediaUrl) async {
+    if (_videoUrls.containsKey(mediaUrl)) return _videoUrls[mediaUrl]!;
+    final signedUrl = await SupabaseConfig.client.storage
+        .from('chat-media')
+        .createSignedUrl(mediaUrl, 60);
+    _videoUrls[mediaUrl] = signedUrl;
+    return signedUrl;
   }
 
   Future<String> _getImageUrl(String mediaUrl) async {
@@ -442,9 +662,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Video sending not yet implemented')),
-                  );
+                  _startVideoRecording();
                 },
               ),
               ListTile(
@@ -703,7 +921,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                         shouldExtractWaveform: true,
                                       );
                                       await playerController.startPlayer();
-                                      // Add listener to handle completion if needed
                                       playerController.onCompletion.listen((event) {
                                         playerController.pausePlayer();
                                       });
@@ -721,7 +938,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: SizedBox(
-                                  width: 150, // Fixed width for waveform
+                                  width: 150,
                                   height: 40,
                                   child: AudioFileWaveforms(
                                     size: const Size(150, 40),
@@ -729,14 +946,73 @@ class _ChatScreenState extends State<ChatScreen> {
                                     playerWaveStyle: const PlayerWaveStyle(
                                       fixedWaveColor: Colors.white54,
                                       liveWaveColor: Colors.white,
-                                      scaleFactor: 150, // Increase scale for more pronounced peaks
-                                      waveThickness: 2.5, // Thicker waveform lines
-                                      spacing: 3, // Adjust spacing for better readability
+                                      scaleFactor: 150,
+                                      waveThickness: 2.5,
+                                      spacing: 3,
                                     ),
                                   ),
                                 ),
                               ),
                             ],
+                          );
+                        },
+                      )
+                    else if (message.mediaType == 'video' && message.mediaUrl != null)
+                      FutureBuilder<String>(
+                        future: _getVideoUrl(message.mediaUrl!),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const CircularProgressIndicator(color: Color(0xFF4CAF50));
+                          }
+                          if (snapshot.hasError || !snapshot.hasData) {
+                            return const Text(
+                              'Failed to load video',
+                              style: TextStyle(color: Colors.red),
+                            );
+                          }
+                          if (!_videoControllers.containsKey(message.id)) {
+                            final controller = VideoPlayerController.network(snapshot.data!);
+                            _videoControllers[message.id] = controller;
+                            controller.initialize().then((_) {
+                              setState(() {});
+                            }).catchError((e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Failed to initialize video: $e')),
+                              );
+                            });
+                          }
+                          final controller = _videoControllers[message.id]!;
+                          return GestureDetector(
+                            onTap: () {
+                              if (controller.value.isInitialized) {
+                                if (controller.value.isPlaying) {
+                                  controller.pause();
+                                } else {
+                                  controller.play();
+                                }
+                                setState(() {});
+                              }
+                            },
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Container(
+                                  width: 150,
+                                  height: 150,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white24),
+                                  ),
+                                  child: ClipOval(
+                                    child: controller.value.isInitialized
+                                        ? VideoPlayer(controller)
+                                        : const CircularProgressIndicator(color: Color(0xFF4CAF50)),
+                                  ),
+                                ),
+                                if (controller.value.isInitialized && !controller.value.isPlaying)
+                                  const Icon(Icons.play_arrow, color: Colors.white, size: 40),
+                              ],
+                            ),
                           );
                         },
                       )
@@ -841,9 +1117,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.dispose();
     _messagesChannel?.unsubscribe();
     _recorderController.dispose();
+    _cameraController?.dispose();
+    _recordingTimer?.cancel();
     for (var path in _localAudioPaths.values) {
       File(path).deleteSync();
     }
+    for (var controller in _videoControllers.values) {
+      controller.dispose();
+    }
+    _videoControllers.clear();
     super.dispose();
   }
 }
