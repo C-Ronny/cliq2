@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../auth/auth_service.dart';
 import '../../../models/user_model.dart';
-import 'friend_profile_screen.dart';
 import 'dart:async';
 
 class FriendsScreen extends StatefulWidget {
@@ -301,6 +300,35 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
     }
   }
 
+  Future<void> _createChat(String friendId) async {
+    try {
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User not authenticated')),
+        );
+        return;
+      }
+
+      // Create a conversation with the current user and friend
+      final conversation = await _authService.createConversation([currentUser.id, friendId]);
+      final friend = _friends.firstWhere((f) => f.id == friendId);
+
+      // Navigate to the chat screen
+      context.go(
+        '/chat/${conversation['id']}',
+        extra: {
+          'friendName': '${friend.firstName ?? ''} ${friend.lastName ?? ''}',
+          'friendId': friendId,
+        },
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to start chat: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -416,12 +444,6 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                                                 const EdgeInsets.symmetric(vertical: 4.0),
                                             child: _buildUserCard(
                                               user: friend,
-                                              onTap: () {
-                                                context.push(
-                                                  '/main/friend-profile',
-                                                  extra: friend,
-                                                );
-                                              },
                                               actionButton: _buildAnimatedButton(
                                                 label: 'Remove',
                                                 color: Colors.redAccent,
@@ -608,10 +630,82 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
   Widget _buildUserCard({
     required UserModel user,
     Widget? actionButton,
-    VoidCallback? onTap,
   }) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: Colors.grey[900],
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 50,
+                  backgroundImage: user.profilePicture != null
+                      ? NetworkImage(user.profilePicture!)
+                      : null,
+                  child: user.profilePicture == null
+                      ? Text(
+                          (user.firstName ?? 'U')[0].toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 40,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        )
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  user.username ?? 'No username',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${user.firstName ?? 'Unknown'} ${user.lastName ?? ''}',
+                  style: const TextStyle(
+                    color: Color(0xFFB3B3B3),
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _createChat(user.id);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4CAF50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 32,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: const Text(
+                    'Message',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(

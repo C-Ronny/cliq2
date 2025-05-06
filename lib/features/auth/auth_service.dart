@@ -655,20 +655,45 @@ class AuthService {
     }
   }
 
-Future<void> declineCallInvite(String inviteId) async {
-  final currentUser = supabase.auth.currentUser;
-  if (currentUser == null) throw Exception('User not authenticated');
+  Future<void> declineCallInvite(String inviteId) async {
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) throw Exception('User not authenticated');
 
-  try {
-    await supabase
-        .from('call_invites')
-        .update({'status': 'declined'})
-        .eq('id', inviteId)
-        .eq('invited_user_id', currentUser.id);
-  } catch (e) {
-    throw Exception('Failed to decline call invite: $e');
+    try {
+      await supabase
+          .from('call_invites')
+          .update({'status': 'declined'})
+          .eq('id', inviteId)
+          .eq('invited_user_id', currentUser.id);
+    } catch (e) {
+      throw Exception('Failed to decline call invite: $e');
+    }
   }
-}
+
+  Future<Map<String, dynamic>> createConversation(List<String> participantIds) async {
+    if (!(await _connectivityService.isConnected())) {
+      throw Exception('No internet connection');
+    }
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    try {
+      final response = await supabase
+          .from('conversations')
+          .insert({
+            'participant_ids': participantIds,
+          })
+          .select()
+          .single();
+
+      return response;
+    } catch (e) {
+      throw Exception('Failed to create conversation: $e');
+    }
+  }
 
 
 }
