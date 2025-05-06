@@ -21,6 +21,7 @@ dependencies:
   image_picker: ^1.1.2 # for selecting images
   permission_handler: ^12.0.0+1 # for handling permissions
   agora_rtc_engine: ^6.5.1 # for video calling
+  cached_network_image: ^3.4.1 # for caching network images
   
   
   

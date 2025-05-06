@@ -19,6 +19,7 @@ class ChatListScreenState extends State<ChatListScreen> {
   List<Map<String, dynamic>> _filteredConversations = [];
   RealtimeChannel? _messagesChannel;
   String? _currentUserId;
+  bool _isLoading = true; // Track loading state
 
   @override
   void initState() {
@@ -47,6 +48,10 @@ class ChatListScreenState extends State<ChatListScreen> {
 
   Future<void> _fetchConversations() async {
     if (_currentUserId == null) return;
+
+    setState(() {
+      _isLoading = true; // Set loading to true before fetching
+    });
 
     try {
       // Fetch conversations where the current user is a participant
@@ -117,6 +122,10 @@ class ChatListScreenState extends State<ChatListScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load conversations: $e')),
       );
+    } finally {
+      setState(() {
+        _isLoading = false; // Set loading to false after fetching
+      });
     }
   }
 
@@ -204,90 +213,96 @@ class ChatListScreenState extends State<ChatListScreen> {
             ),
             // Chat List
             Expanded(
-              child: _filteredConversations.isEmpty
-                  ? Center(
-                      child: SingleChildScrollView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        child: Container(
-                          height: MediaQuery.of(context).size.height - 200, // Ensure enough height to enable scrolling
-                          child: const Center(
-                            child: Text(
-                              'No chats found.',
-                              style: TextStyle(color: Colors.grey, fontSize: 16),
-                            ),
-                          ),
-                        ),
+              child: _isLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF4CAF50),
                       ),
                     )
-                  : ListView.builder(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: _filteredConversations.length,
-                      itemBuilder: (context, index) {
-                        final conversation = _filteredConversations[index];
-                        return ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.grey[700],
-                            backgroundImage: conversation['friend_profile_picture'] != null
-                                ? NetworkImage(conversation['friend_profile_picture'])
-                                : null,
-                            child: conversation['friend_profile_picture'] == null
-                                ? Text(
-                                    conversation['friend_name']?.substring(0, 1).toUpperCase() ?? 'U',
-                                    style: const TextStyle(color: Colors.white),
-                                  )
-                                : null,
-                          ),
-                          title: Text(
-                            conversation['friend_name'] ?? 'Unknown',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: conversation['unread']
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                          subtitle: Text(
-                            conversation['last_message'] ?? '',
-                            style: TextStyle(
-                              color: Colors.grey[400],
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                _formatTimestamp(conversation['timestamp']),
-                                style: TextStyle(
-                                  color: Colors.grey[400],
-                                  fontSize: 12,
+                  : _filteredConversations.isEmpty
+                      ? Center(
+                          child: SingleChildScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            child: Container(
+                              height: MediaQuery.of(context).size.height - 200,
+                              child: const Center(
+                                child: Text(
+                                  'No chats found.',
+                                  style: TextStyle(color: Colors.grey, fontSize: 16),
                                 ),
                               ),
-                              if (conversation['unread'])
-                                Container(
-                                  margin: const EdgeInsets.only(top: 4.0),
-                                  width: 10,
-                                  height: 10,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF4CAF50),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                            ],
+                            ),
                           ),
-                          onTap: () {
-                            context.go(
-                              '/chat/${conversation['friend_id']}',
-                              extra: {
-                                'friendName': conversation['friend_name'],
-                                'friendId': conversation['friend_id'],
-                                'conversationId': conversation['conversation_id'],
+                        )
+                      : ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          itemCount: _filteredConversations.length,
+                          itemBuilder: (context, index) {
+                            final conversation = _filteredConversations[index];
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: Colors.grey[700],
+                                backgroundImage: conversation['friend_profile_picture'] != null
+                                    ? NetworkImage(conversation['friend_profile_picture'])
+                                    : null,
+                                child: conversation['friend_profile_picture'] == null
+                                    ? Text(
+                                        conversation['friend_name']?.substring(0, 1).toUpperCase() ?? 'U',
+                                        style: const TextStyle(color: Colors.white),
+                                      )
+                                    : null,
+                              ),
+                              title: Text(
+                                conversation['friend_name'] ?? 'Unknown',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: conversation['unread']
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                              subtitle: Text(
+                                conversation['last_message'] ?? '',
+                                style: TextStyle(
+                                  color: Colors.grey[400],
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    _formatTimestamp(conversation['timestamp']),
+                                    style: TextStyle(
+                                      color: Colors.grey[400],
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  if (conversation['unread'])
+                                    Container(
+                                      margin: const EdgeInsets.only(top: 4.0),
+                                      width: 10,
+                                      height: 10,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFF4CAF50),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              onTap: () {
+                                context.go(
+                                  '/chat/${conversation['friend_id']}',
+                                  extra: {
+                                    'friendName': conversation['friend_name'],
+                                    'friendId': conversation['friend_id'],
+                                    'conversationId': conversation['conversation_id'],
+                                  },
+                                );
                               },
                             );
                           },
-                        );
-                      },
-                    ),
+                        ),
             ),
           ],
         ),

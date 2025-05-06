@@ -39,17 +39,23 @@ class _ChatScreenState extends State<ChatScreen> {
   final int _messagesPerPage = 20;
   bool _hasMoreMessages = true;
   String? _friendProfilePicture;
+  Map<String, String> _imageUrls = {};
 
   @override
   void initState() {
     super.initState();
-    _messageController.addListener(() {
-      setState(() {
-        _canSend = _messageController.text.trim().isNotEmpty;
-      });
-    });
+    _messageController.addListener(_updateCanSend);
     _scrollController.addListener(_scrollListener);
     _initialize();
+  }
+
+  void _updateCanSend() {
+    final newCanSend = _messageController.text.trim().isNotEmpty;
+    if (_canSend != newCanSend) {
+      setState(() {
+        _canSend = newCanSend;
+      });
+    }
   }
 
   Future<void> _initialize() async {
@@ -123,7 +129,7 @@ class _ChatScreenState extends State<ChatScreen> {
           .from('messages')
           .select('*')
           .eq('conversation_id', widget.conversationId)
-          .order('created_at', ascending: false) // Newest first for pagination
+          .order('created_at', ascending: false)
           .range(
             loadMore ? _messages.length : 0,
             loadMore ? _messages.length + _messagesPerPage - 1 : _messagesPerPage - 1,
@@ -133,7 +139,7 @@ class _ChatScreenState extends State<ChatScreen> {
           .map((json) => MessageModel.fromJson(json))
           .toList()
           .reversed
-          .toList(); // Reverse to display oldest first in UI
+          .toList();
 
       setState(() {
         if (loadMore) {
@@ -190,13 +196,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future.delayed(Duration.zero, () {
       if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       }
     });
   }
@@ -240,18 +242,12 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Debug: Check Supabase client session
-    final session = SupabaseConfig.client.auth.currentSession;
-    print('DEBUG: Supabase session: ${session != null ? "Active" : "Not active"}');
-    print('DEBUG: Authenticated user ID: ${currentUser.id}');
-
     setState(() {
       _isUploading = true;
       _errorMessage = null;
     });
 
     try {
-      // Verify the conversation exists
       final conversation = await SupabaseConfig.client
           .from('conversations')
           .select('id')
@@ -259,39 +255,27 @@ class _ChatScreenState extends State<ChatScreen> {
           .single();
       if (conversation == null) throw Exception('Conversation not found');
 
-      // Pick image from gallery
       final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-      if (image == null) return; // User cancelled
+      if (image == null) return;
 
-      // Upload image to Supabase Storage
       final file = File(image.path);
       final fileName = '${DateTime.now().millisecondsSinceEpoch}_${currentUser.id}.jpg';
-      print('DEBUG: Attempting to upload file: $fileName to chat-media bucket');
       await SupabaseConfig.client.storage
           .from('chat-media')
           .upload(fileName, file, fileOptions: const FileOptions(contentType: 'image/jpeg'));
 
-      // Get the public URL of the uploaded image (for logging)
-      final imageUrl = SupabaseConfig.client.storage
-          .from('chat-media')
-          .getPublicUrl(fileName);
-      print('DEBUG: Image URL: $imageUrl');
-
-      // Create a message with the image URL
       final message = MessageModel(
         id: '',
-        content: '', // No text content for image messages
+        content: '',
         senderId: currentUser.id,
         createdAt: DateTime.now(),
         conversationId: widget.conversationId,
         mediaType: 'image',
-        mediaUrl: fileName, // Store just the file name
+        mediaUrl: fileName,
       );
 
-      // Insert the message into the database
       await SupabaseConfig.client.from('messages').insert(message.toJson());
     } catch (e) {
-      print('DEBUG: Upload failed with error: $e');
       setState(() {
         _errorMessage = 'Failed to send image: $e';
       });
@@ -303,6 +287,15 @@ class _ChatScreenState extends State<ChatScreen> {
         _isUploading = false;
       });
     }
+  }
+
+  Future<String> _getImageUrl(String mediaUrl) async {
+    if (_imageUrls.containsKey(mediaUrl)) return _imageUrls[mediaUrl]!;
+    final signedUrl = await SupabaseConfig.client.storage
+        .from('chat-media')
+        .createSignedUrl(mediaUrl, 60);
+    _imageUrls[mediaUrl] = signedUrl;
+    return signedUrl;
   }
 
   void _showMediaOptions(BuildContext context) {
@@ -369,6 +362,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false, // Prevent resizing when keyboard appears
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -403,17 +397,24 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: const Color(0xFF4CAF50),
         elevation: 0,
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _onRefresh,
-              color: const Color(0xFF4CAF50),
-              child: _buildMessagesList(),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _onRefresh,
+                color: const Color(0xFF4CAF50),
+                child: _buildMessagesList(),
+              ),
             ),
-          ),
-          _buildMessageInput(),
-        ],
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: _buildMessageInput(),
+            ),
+          ],
+        ),
       ),
       backgroundColor: Colors.grey[900],
     );
@@ -431,32 +432,30 @@ class _ChatScreenState extends State<ChatScreen> {
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Container(
-            height: MediaQuery.of(context).size.height - 200,
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _errorMessage!,
-                    style: TextStyle(color: Colors.red[400], fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _initialize,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4CAF50),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Retry',
-                      style: TextStyle(color: Colors.white),
+            height: MediaQuery.of(context).size.height - kToolbarHeight - 200,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  _errorMessage!,
+                  style: TextStyle(color: Colors.red[400], fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: _initialize,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4CAF50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                ],
-              ),
+                  child: const Text(
+                    'Retry',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -468,7 +467,7 @@ class _ChatScreenState extends State<ChatScreen> {
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Container(
-            height: MediaQuery.of(context).size.height - 200,
+            height: MediaQuery.of(context).size.height - kToolbarHeight - 200,
             child: Center(
               child: Text(
                 'No messages yet. Start chatting with ${widget.friendName}!',
@@ -537,9 +536,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   children: [
                     if (message.mediaType == 'image' && message.mediaUrl != null)
                       FutureBuilder<String>(
-                        future: SupabaseConfig.client.storage
-                            .from('chat-media')
-                            .createSignedUrl(message.mediaUrl!, 60),
+                        future: _getImageUrl(message.mediaUrl!),
                         builder: (context, snapshot) {
                           if (snapshot.connectionState == ConnectionState.waiting) {
                             return const CircularProgressIndicator(color: Color(0xFF4CAF50));
@@ -584,6 +581,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return ListView(
       controller: _scrollController,
       physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 80.0), // Space for input field
       children: messageWidgets,
     );
   }
