@@ -48,6 +48,48 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.updateCallState(_inCall, _showFriendOverlay);
   }
 
+  Future<String> _showNameDialog(BuildContext context) async {
+  final TextEditingController controller = TextEditingController();
+  String roomName = '';
+
+  await showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Enter Room Name'),
+      content: TextField(
+        controller: controller,
+        decoration: const InputDecoration(hintText: 'Room Name'),
+        onChanged: (value) {
+          roomName = value.trim();
+        },
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+          },
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () {
+            if (roomName.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Room name cannot be empty')),
+              );
+              return;
+            }
+            Navigator.pop(context, roomName);
+          },
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+
+  // If the dialog is dismissed (e.g., by pressing Cancel), return a default name or handle it
+  return roomName.isNotEmpty ? roomName : 'Default Room';
+}
+
   Future<void> _initializeAgora() async {
     try {
       final cameraStatus = await Permission.camera.request();
@@ -253,11 +295,11 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       widget.updateCallState(_inCall, _showFriendOverlay);
 
-      final channelId = validRoomId;
-      print('Joining Agora channel with channelId: $channelId');
+      const fixedChannelId = '0c610c2a-c710-44c4-83ae-469897755f90'; // Fixed channel ID for Agora
+      print('Joining Agora channel with channelId: $fixedChannelId');
       await _engine!.joinChannel(
-        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
-        channelId: channelId,
+        token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=', 
+        channelId: fixedChannelId,
         uid: 0,
         options: const ChannelMediaOptions(
           clientRoleType: ClientRoleType.clientRoleBroadcaster,
@@ -267,7 +309,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
-      // Refresh the invites list after acceptance
       if (mounted) {
         await _fetchCallInvites();
       }
@@ -499,77 +540,39 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startCall() async {
     try {
-      final TextEditingController _nameController = TextEditingController();
-      final name = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: Colors.grey[800],
-          title: const Text('Create New Call', style: TextStyle(color: Colors.white)),
-          content: TextField(
-            controller: _nameController,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: 'Call Name',
-              hintStyle: TextStyle(color: Colors.grey[400]),
-              enabledBorder: const UnderlineInputBorder(
-                borderSide: BorderSide(color: Colors.white),
-              ),
-              focusedBorder: const UnderlineInputBorder(
-                borderSide: BorderSide(color: Color(0xFF4CAF50)),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white)),
-            ),
-            TextButton(
-              onPressed: () {
-                final enteredName = _nameController.text.trim();
-                Navigator.pop(context, enteredName.isNotEmpty ? enteredName : null);
-              },
-              child: const Text('Create', style: TextStyle(color: Color(0xFF4CAF50))),
-            ),
-          ],
-        ),
-      );
+      final roomName = await _showNameDialog(context);
+      if (roomName.isEmpty) return; // Simplified condition since roomName is guaranteed non-null
 
-      print('Dialog returned name: $name');
-      if (name == null || name.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please enter a valid call name'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Creating call...')),
-      );
-      print('Creating video room with name: $name');
-      final room = await _authService.createVideoRoom(name: name);
-      print('Created room successfully: $room');
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser == null) throw Exception('User not authenticated');
 
-      final userId = (await _authService.getCurrentUser())!.id;
-      print('Joining room with userId: $userId');
-      await _authService.joinVideoRoom(room['room_id'], userId);
+      print('Creating video room with name: $roomName');
+      final roomData = await _authService.createVideoRoom(name: roomName);
+      if (roomData == null) throw Exception('Failed to create room');
+
+      print('Created room successfully: $roomData');
 
       setState(() {
         _inCall = true;
-        _currentRoom = room;
+        _currentRoom = roomData;
         _isCreator = true;
       });
-      widget.updateCallState(_inCall, _showFriendOverlay);
-      print('Updated state: inCall=$_inCall, currentRoom=$_currentRoom');
 
-      final channelId = _currentRoom!['room_id'].toString(); // Use room_id as channelId
-      print('Joining Agora channel with channelId: $channelId');
+      widget.updateCallState(_inCall, _showFriendOverlay);
+
+      print('Joining room with userId: ${currentUser.id}');
+      await _authService.joinVideoRoom(roomData['room_id'], currentUser.id);
+
+      const fixedChannelId = '0c610c2a-c710-44c4-83ae-469897755f90'; // Fixed channel ID for Agora
+      print('Joining Agora channel with channelId: $fixedChannelId');
       await _engine!.joinChannel(
         token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
-        channelId: channelId,
+        channelId: fixedChannelId,
         uid: 0,
         options: const ChannelMediaOptions(
           clientRoleType: ClientRoleType.clientRoleBroadcaster,
@@ -578,20 +581,36 @@ class _HomeScreenState extends State<HomeScreen> {
           autoSubscribeAudio: true,
         ),
       );
+
       print('Successfully joined Agora channel');
     } catch (e) {
       print('Error in _startCall: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to start call: ${e.toString().replaceAll('Exception: ', '')}'),
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(
-            label: 'Retry',
-            textColor: Colors.white,
-            onPressed: _startCall,
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+          _inCall = false;
+          _currentRoom = null;
+          _isCreator = false;
+        });
+        widget.updateCallState(_inCall, _showFriendOverlay);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start call: ${_errorMessage!}'),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: _startCall,
+            ),
           ),
-        ),
-      );
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -789,9 +808,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                           });
                                           widget.updateCallState(_inCall, _showFriendOverlay);
                                         }
+                                        const fixedChannelId = '0c610c2a-c710-44c4-83ae-469897755f90'; 
                                         await _engine!.joinChannel(
-                                          token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=',
-                                          channelId: '0c610c2a-c710-44c4-83ae-469897755f90',
+                                          token: '007eJxTYChfkmar+Ldo6fewvy80HsXE6988Hz7xPsdin7nlf5J/tQcrMJgbWZgYm1iam6WkJZukGFhamiWZWRgZmCcnGZqappkbsvpJZjQEMjLoXr7FwsgAgSC+CoNBspmhQbJRom6yuaGBrolJsomuhXFiqq6JmaWFpbk5ULelAQMDAEAyJ1U=', 
+                                          channelId: fixedChannelId,
                                           uid: 0,
                                           options: const ChannelMediaOptions(
                                             clientRoleType: ClientRoleType.clientRoleBroadcaster,
@@ -800,7 +820,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             autoSubscribeAudio: true,
                                           ),
                                         );
-                                        await _fetchCallInvites(); // Refresh invites after joining
+                                        await _fetchCallInvites();
                                       } catch (e) {
                                         if (mounted) {
                                           ScaffoldMessenger.of(context).showSnackBar(
