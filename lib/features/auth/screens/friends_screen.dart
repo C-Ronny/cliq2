@@ -742,6 +742,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                     elevation: 8,
                     child: Container(
                       constraints: const BoxConstraints(maxHeight: 300),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
                       child: _isSearching
                           ? const Center(
                               child: Padding(
@@ -784,18 +785,14 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                                     ],
                                   ),
                                 )
-                              : ListView.separated(
+                              : ListView.builder(
                                   shrinkWrap: true,
                                   physics: const BouncingScrollPhysics(),
                                   itemCount: _searchResults.length,
-                                  separatorBuilder: (context, index) => const Divider(
-                                    color: Color(0xFF333333),
-                                    height: 1,
-                                    indent: 70,
-                                  ),
                                   itemBuilder: (context, index) {
                                     final user = _searchResults[index];
                                     return ListTile(
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                                       leading: CircleAvatar(
                                         radius: 24,
                                         backgroundColor: Colors.grey[800],
@@ -828,11 +825,23 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                                           fontSize: 14,
                                         ),
                                       ),
-                                      trailing: _buildAnimatedButton(
-                                        label: 'Add Friend',
-                                        icon: Icons.person_add_alt,
-                                        color: const Color(0xFF4CAF50),
+                                      trailing: ElevatedButton(
                                         onPressed: () => _sendFriendRequest(user.id),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF4CAF50),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        ),
+                                        child: const Text(
+                                          'Add Friend',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
                                       ),
                                     );
                                   },

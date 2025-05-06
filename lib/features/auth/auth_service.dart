@@ -231,40 +231,6 @@ class AuthService {
     }
   }
 
-  // Search users by username
-  Future<List<UserModel>> searchUsers({
-    required String query,
-    required Set<String> friendIds,
-    required Set<String> requestIds,
-  }) async {
-    if (!(await _connectivityService.isConnected())) {
-      throw Exception('No internet connection');
-    }
-
-    try {
-      final currentUser = await getCurrentUser();
-      if (currentUser == null) {
-        throw Exception('User not authenticated');
-      }
-
-      final response = await supabase
-          .from('profiles')
-          .select('id, username, email, first_name, last_name, profile_picture')
-          .ilike('username', '%$query%')
-          .neq('id', currentUser.id);
-
-      final users = (response as List<dynamic>)
-          .map((json) => UserModel.fromJson(json))
-          .toList();
-
-      return users
-          .where((user) => !friendIds.contains(user.id) && !requestIds.contains(user.id))
-          .toList();
-    } catch (e) {
-      throw Exception('Failed to search users: $e');
-    }
-  }
-
   // Fetch signed URLs for a list of users concurrently
   Future<List<UserModel>> fetchSignedUrls(List<UserModel> users) async {
     final updatedUsers = List<UserModel>.from(users);
@@ -480,22 +446,75 @@ class AuthService {
     }
   }
 
-  Future<void> fetchProfilePicture(UserModel user) async {
-    if (user.profilePicture != null && user.profilePicture!.contains('signed')) return;
+  Future<List<UserModel>> searchUsers({
+    required String query,
+    required Set<String> friendIds,
+    required Set<String> requestIds,
+  }) async {
+    if (query.isEmpty) return [];
+
+    final currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
 
     try {
-      final startTime = DateTime.now();
-      final signedUrl = await supabase.storage
-          .from('avatars')
-          .createSignedUrl('${user.id}.jpg', 60 * 60)
-          .timeout(const Duration(seconds: 2)); // Shorter timeout
-      final duration = DateTime.now().difference(startTime);
-      print('Fetching profile picture for ${user.id} took: ${duration.inMilliseconds}ms');
+      print('Executing search query: $query');
+      
+      // Search for users by first_name, last_name, or username
+      final response = await supabase
+          .from('profiles')
+          .select('*')
+          .or('first_name.ilike.%$query%,last_name.ilike.%$query%,username.ilike.%$query%')
+          .neq('id', currentUser.id) // Exclude current user
+          .limit(20);
 
-      user.profilePicture = signedUrl;
+      print('Search response: $response');
+      
+      final users = response.map((data) => UserModel.fromJson(data)).toList();
+      
+      // Filter out users who are already friends or have pending requests
+      final filteredUsers = users.where((user) {
+        return !friendIds.contains(user.id) && !requestIds.contains(user.id);
+      }).toList();
+      
+      print('Found ${filteredUsers.length} users after filtering');
+      return filteredUsers;
     } catch (e) {
-      print('Failed to fetch signed URL for ${user.id}: $e');
-      user.profilePicture = null; // Fallback to null
+      print('Search error: $e');
+      throw Exception('Failed to search users: $e');
+    }
+  }
+
+  Future<void> fetchProfilePicture(UserModel user) async {
+    if (user.profilePicture != null || user.id.isEmpty) return;
+    
+    try {
+      // Simple approach - just list all files and filter manually
+      final files = await supabase.storage
+          .from('avatars')
+          .list();
+      
+      // Filter files that start with the user's ID
+      final userFiles = files.where((file) => 
+          file.name.startsWith(user.id) || 
+          file.name == '${user.id}.jpg' || 
+          file.name == '${user.id}.png'
+      );
+      
+      final hasProfilePicture = userFiles.isNotEmpty;
+      
+      if (hasProfilePicture) {
+        final fileName = userFiles.first.name;
+        final signedUrl = await supabase.storage
+            .from('avatars')
+            .createSignedUrl(fileName, 60);
+        
+        // Update the user model with the profile picture URL
+        user.profilePicture = signedUrl;
+      }
+    } catch (e) {
+      print('Failed to fetch profile picture for ${user.id}: $e');
     }
   }
 
