@@ -7,12 +7,7 @@ A social video and chat application built with Flutter. Connect with friends, sh
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Environment Variables](#environment-variables)
-  - [Running the App](#running-the-app)
-- [Building the App](#building-the-app)
+- [Installation](#installation)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -78,15 +73,6 @@ lib/
 └── main.dart         # Main application entry point
 ```
 
-## Getting Started
-
-Follow these instructions to get a copy of the project up and running on your local machine for development and testing purposes.
-
-### Prerequisites
-
--   Flutter SDK: Make sure you have Flutter installed. Refer to the [Flutter official documentation](https://flutter.dev/docs/get-started/install).
--   A code editor like VS Code or Android Studio.
--   An emulator or a physical device to run the app.
 
 ### Installation
 
