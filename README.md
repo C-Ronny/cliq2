@@ -30,7 +30,6 @@ A social video and chat application built with Flutter. Connect with friends, sh
 -   **Video Calling:**
     -   Create and join video call rooms powered by Agora.
     -   Invite friends to video calls.
-    -   (Functionality for locking rooms and managing participants exists in code).
 -   **Friend System:**
     -   Search for other users.
     -   Send, accept, or decline friend requests.
@@ -57,7 +56,6 @@ A social video and chat application built with Flutter. Connect with friends, sh
     *   `permission_handler`: Requesting device permissions (camera, microphone).
     *   `cached_network_image`: Caching network images efficiently.
     *   `connectivity_plus`: Checking network connectivity.
-    *   `flutter_dotenv`: Managing environment variables.
     *   `loading_animation_widget`: UI loading indicators.
     *   `uuid`: Generating unique IDs.
 
@@ -92,56 +90,7 @@ Follow these instructions to get a copy of the project up and running on your lo
 
 ### Installation
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository-url>
-    cd cliq2
-    ```
-
-2.  **Install dependencies:**
-    ```bash
-    flutter pub get
-    ```
-
-### Environment Variables
-
-This project uses a `.env` file to manage environment-specific configurations.
-
-1.  Create a file named `.env` in the root directory of the project.
-2.  Add the following environment variables with your specific keys:
-
-    ```env
-    SUPABASE_URL=your_supabase_url
-    SUPABASE_ANON_KEY=your_supabase_anon_key
-    AGORA_APP_ID=your_agora_app_id
-    ```
-
-    -   `SUPABASE_URL` and `SUPABASE_ANON_KEY` can be obtained from your Supabase project settings.
-    -   `AGORA_APP_ID` can be obtained from your Agora project dashboard.
-
-    **Note:** Ensure the `.env` file is added to your `.gitignore` to prevent committing sensitive keys.
-
-### Running the App
-
-Once the dependencies are installed and the environment variables are set up, you can run the app using:
-
-```bash
-flutter run
-```
-
-## Building the App
-
-(This section can be expanded with specific build commands for different platforms if needed.)
-
-For example, to build an Android APK:
-```bash
-flutter build apk --release
-```
-
-To build for iOS:
-```bash
-flutter build ios --release
-```
+- apk file coming soon...
 
 ## Contributing
 
@@ -154,8 +103,6 @@ Contributions are welcome! If you have suggestions or want to contribute to the 
 5.  Push to the branch (`git push origin feature/your-feature-name`).
 6.  Open a Pull Request.
 
-Please ensure your code adheres to the existing coding style and includes tests where applicable.
-
 ## License
 
-(Consider adding a license, e.g., MIT License. If no license is chosen, this can be removed or stated as "All rights reserved.")
+All rights reserved.
