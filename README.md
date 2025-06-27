@@ -76,7 +76,7 @@ lib/
 
 ### Installation
 
-- apk file coming soon...
+- apk file will be uploaded soon...
 
 ## Contributing
 
